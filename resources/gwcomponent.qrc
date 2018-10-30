@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/GWComponent">
+        <file alias="gwcomponenticon">images/gwcomponenticon.png</file>
+    </qresource>
+</RCC>
