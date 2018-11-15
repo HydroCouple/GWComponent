@@ -1,5 +1,5 @@
 /*!
-*  \file    GWComponent.cpp
+*  \file    gwmodel.h
 *  \author  Caleb Amoa Buahin <caleb.buahin@gmail.com>
 *  \version 1.0.0
 *  \section Description
@@ -24,17 +24,35 @@
 #include "odesolver.h"
 
 #include <QObject>
+#include <QFileInfo>
 #include <unordered_map>
+#include <vector>
 
 #ifdef USE_NETCDF
 #include "threadsafenetcdf/threadsafencvar.h"
 #endif
 
 class ThreadSafeNcFile;
+struct Element;
+struct ElementJunction;
+class IBoundaryCondition;
+
+
+struct SolverUserData
+{
+    GWModel *model = nullptr;
+    int variableType = 0;
+    int variableIndex = -1;
+};
+
+typedef void (*RetrieveCouplingData)(GWModel *model, double dateTime);
 
 class GWCOMPONENT_EXPORT GWModel: public QObject
 {
     Q_OBJECT
+
+    friend struct Element;
+    friend struct ElementCell;
 
   public:
 
@@ -145,6 +163,12 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     double currentDateTime() const;
 
     /*!
+     * \brief hydHeadSolver
+     * \return
+     */
+    ODESolver *hydHeadSolver() const ;
+
+    /*!
      * \brief solver
      * \return
      */
@@ -203,6 +227,42 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \param value
      */
     void setDefaultSedimentSpecificHeatCapacity(double value);
+
+    /*!
+     * \brief defaultPorosity
+     * \return
+     */
+    double defaultPorosity() const;
+
+    /*!
+     * \brief setDefaultPorosity
+     * \param porosity
+     */
+    void setDefaultPorosity(double porosity);
+
+    /*!
+     * \brief hydraulicConductivityX
+     * \return
+     */
+    double defaultHydraulicConductivityX() const;
+
+    /*!
+     * \brief setHydraulicConductivityX
+     * \param hydConX
+     */
+    void setDefaultHydraulicConductivityX(double hydConX);
+
+    /*!
+     * \brief hydraulicConductivityY
+     * \return
+     */
+    double defaultHydraulicConductivityY() const;
+
+    /*!
+     * \brief setHydraulicConductivityY
+     * \param hydConY
+     */
+    void setDefaultHydraulicConductivityY(double hydConY);
 
     /*!
      * \brief numSolutes
@@ -292,7 +352,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \brief removeElementJunction
      * \param id
      */
-    void deleteElementJunction(int id);
+    void deleteElementJunction(int index);
 
     /*!
      * \brief getElementJunction
@@ -312,13 +372,25 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \brief numCellsPerElement
      * \return
      */
-    int numCellsPerElement() const;
+    int numLeftElementCells() const;
 
     /*!
      * \brief setNumCellsPerElement
      * \param value
      */
-    void setNumCellsPerElement(int value);
+    void setNumLeftElementCells(int value);
+
+    /*!
+     * \brief numRightElementCells
+     * \return
+     */
+    int numRightElementCells() const;
+
+    /*!
+     * \brief setNumRightElementCells
+     * \param value
+     */
+    void setNumRightElementCells(int value);
 
     /*!
      * \brief numElements
@@ -420,6 +492,17 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      */
     void printStatus();
 
+    /*!
+     * \brief saveSave
+     * \param filePath
+     */
+    void saveSave(const QFileInfo &filePath);
+
+    /*!
+     * \brief computeDerivedHydraulics
+     */
+    void computeDerivedHydraulics();
+
   private:
 
     /*!
@@ -448,7 +531,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \param errors
      * \return
      */
-    bool initializeSolver(std::list<std::string> &errors);
+    bool initializeSolvers(std::list<std::string> &errors);
 
     /*!
      * \brief intializeOutputFiles
@@ -456,13 +539,6 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \return
      */
     bool initializeOutputFiles(std::list<std::string> &errors);
-
-    /*!
-     * \brief initializeCSVOutputFile
-     * \param errors
-     * \return
-     */
-    bool initializeCSVOutputFile(std::list<std::string> &errors);
 
     /*!
      * \brief initializeNetCDFOutputFile
@@ -522,7 +598,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \brief computeDHeadDt
      * \param timeStep
      */
-    static void computeDHeadDt(double timeStep);
+    static void computeDHydHeadDt(double t, double y[], double dydt[], void *userData);
 
     /*!
      * \brief computeDTDt
@@ -574,62 +650,82 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     bool readInputFileElementsTag(const QString &line, QString &errorMessage);
 
     /*!
-     * \brief readInputFilePointSourcesTag
-     * \param line
-     */
-    bool readInputFilePointSourcesTag(const QString &line, QString &errorMessage);
-
-    /*!
-     * \brief readInputFileNonPointSourcesTag
-     * \param line
-     */
-    bool readInputFileNonPointSourcesTag(const QString &line, QString &errorMessage);
-
-    /*!
-     * \brief readInputFileUniformHydraulicsTag
+     * \brief readInputFileElementCellWidths
      * \param line
      * \param errorMessage
      * \return
      */
-    bool readInputFileUniformHydraulicsTag(const QString &line, QString &errorMessage);
+    bool readInputFileElementCellWidths(const QString &line, QString &errorMessage);
 
     /*!
-     * \brief readInputFileNonUniformHydraulicsTag
+     * \brief readInputFileElementCellBottomElevTag
      * \param line
      */
-    bool readInputFileNonUniformHydraulicsTag(const QString &line, QString &errorMessage);
+    bool readInputFileElementCellHydraulics(const QString &line, QString &errorMessage);
 
     /*!
-     * \brief readInputFileRadiativeFluxesTag
-     * \param line
-     * \param errorMessage
-     * \return
-     */
-    bool readInputFileUniformRadiativeFluxesTag(const QString &line, QString &errorMessage);
-
-    /*!
-     * \brief readInputFileNonUniformRadiativeFluxesTag
+     * \brief readInputFileElementCellBCHydHeadTag
      * \param line
      * \param errorMessage
      * \return
      */
-    bool readInputFileNonUniformRadiativeFluxesTag(const QString &line, QString &errorMessage);
+    bool readInputFileElementCellBCHydHeadTag(const QString &line, QString &errorMessage);
 
     /*!
-     * \brief readInputFileUniformMCBoundaryConditionTag
+     * \brief readInputFileElementCellBCHydHeadDerivTag
      * \param line
      * \param errorMessage
      * \return
      */
-    bool readInputFileUniformBoundaryConditionTag(const QString &line, QString &errorMessage);
+    bool readInputFileElementCellBCHydHeadDerivTag(const QString &line, QString &errorMessage);
 
     /*!
-     * \brief readInputFileNonUniformMCBoundaryConditionTag
+     * \brief readInputFileElementCellBCFluxTag
      * \param line
      * \param errorMessage
      * \return
      */
-    bool readInputFileNonUniformBoundaryConditionTag(const QString &line, QString &errorMessage);
+    bool readInputFileElementCellBCFluxTag(const QString &line, QString &errorMessage);
+
+    /*!
+     * \brief readInputFileElementCellHeadDepFluxTag
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileElementCellHeadDepFluxTag(const QString &line, QString &errorMessage);
+
+    /*!
+     * \brief readInputFileElementCellTempInitTag
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileElementCellTempInitTag(const QString &line, QString &errorMessage);
+
+    /*!
+     * \brief readInputFileElementCellBCTempTag
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileElementCellBCTempTag(const QString &line, QString &errorMessage);
+
+    /*!
+     * \brief readInputFileElementCellSoluteInitTag
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileElementCellSoluteInitTag(const QString &line, QString &errorMessage);
+
+    /*!
+     * \brief readInputFileElementCellBCSoluteTag
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileElementCellBCSoluteTag(const QString &line, QString &errorMessage);
 
     /*!
      * \brief writeOutput
@@ -679,6 +775,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
 
     //Time variables
     double m_timeStep, //seconds
+    m_prevTimeStep,
     m_startDateTime, //Modified Julian Day
     m_endDateTime, //Modified Julian Day
     m_currentDateTime, //Modified Julian Day
@@ -688,13 +785,22 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_outputInterval, //seconds
     m_nextOutputTime,//Julian Day
     m_timeStepRelaxationFactor,
+    m_maxHead,
+    m_minHead,
     m_maxTemp, //Tracks maximum temperature so far
     m_minTemp; //Tracks minimum temperature so far
 
     std::vector<double> m_maxSolute, //array for tracking maximum solute concentrations
     m_minSolute, //array for tracking minimum solute concentrations
     m_totalSoluteMassBalance, // Tracks total mass balance of solutes (kg)
-    m_totalExternalSoluteFluxMassBalance; //Tracks total mass balance from external sources (kg)
+    m_totalExternalSoluteMassBalance, //Tracks total mass balance from external sources (kg)
+    m_currHydHead,
+    m_outHydHead,
+    m_currTemps,
+    m_outTemps;
+
+    std::vector<std::vector<double>> m_currSoluteConcs,
+                                     m_outSoluteConcs;
 
     int m_numInitFixedTimeSteps, //Number of initial fixed timeSteps of the minimum timestep to use when using the adaptive time step;
     m_numCurrentInitFixedTimeSteps, //Count number of initial minimum timesteps that have been used
@@ -703,11 +809,14 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_flushToDiskFrequency, // Number of times to write output stored in memory to disk
     m_currentflushToDiskCount, //Number of timesteps that have been stored in memory so far since the last flush to disk
     m_addedSoluteCount,
-    m_numCellsPerElement;
+    m_numLeftCellsPerElement,
+    m_numRightCellsPerElement,
+    m_totalCellsPerElement;
 
     bool m_useAdaptiveTimeStep, //Use the adaptive time step option
     m_verbose, //Print simulation information to console
-    m_flushToDisk, //Write output saved in memory to disk;
+    m_solveHeatTransport,
+    m_flushToDisk;
 
     //Element junctions
     std::vector<ElementJunction*> m_elementJunctions;
@@ -721,7 +830,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     std::vector<IBoundaryCondition*> m_boundaryConditions;
 
     //Solver Objects
-    ODESolver *m_heatSolver = nullptr; //Heat solver
+    ODESolver *m_hydHeadSolver;
+    ODESolver *m_heatSolver; //Heat solver
     std::vector<ODESolver*> m_soluteSolvers; //Solute solvers
 
     //Global water properties
@@ -729,8 +839,14 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_cp,// Water specific heat capacity default = 4187.0; // J/kg/C,
     m_sedDensity, //Sediment density //kg/m^3
     m_sedCp, //Sediment specific heat capacity// J/kg/C,
-    m_totalHeatBalance, //Tracks total heat accumulation (KJ)
-    m_totalExternalHeatFluxBalance;//Track total heat accumulation from external heat sources (KJ)
+    m_hydConX, //Hydraulic conductivity in the X direction
+    m_hydConY, //Hydraaulic conductivity in the Y direction
+    m_specificStorage,
+    m_porosity,
+    m_defaultCellWidth,
+    m_totalMassBalance,
+    m_totalHeatBalance, //Track total heat accumulation from external heat sources (KJ)
+    m_totalExternalHeatBalance;
 
     //File input and output
     QFileInfo m_inputFile, //Input filepath

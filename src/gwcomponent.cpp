@@ -20,9 +20,18 @@
 #include "gwcomponent.h"
 #include "core/valuedefinition.h"
 #include "spatial/linestring.h"
+#include "core/dimension.h"
+#include "core/abstractoutput.h"
+#include "core/idbasedargument.h"
+#include "gwmodel.h"
+#include "progresschecker.h"
+#include "temporal/timedata.h"
+#include "element.h"
+#include "elementjunction.h"
+#include "spatial/point.h"
 
 using namespace HydroCouple;
-
+using namespace HydroCouple::Temporal;
 
 GWComponent::GWComponent(const QString &id, GWComponentInfo *modelComponentInfo)
   : AbstractTimeModelComponent(id, modelComponentInfo),
@@ -88,13 +97,61 @@ void GWComponent::prepare()
 
 void GWComponent::update(const QList<HydroCouple::IOutput *> &requiredOutputs)
 {
+  if(status() == IModelComponent::Updated)
+  {
+    setStatus(IModelComponent::Updating);
 
+    double minConsumerTime = std::max(m_modelInstance->currentDateTime(), getMinimumConsumerTime());
+
+    while (m_modelInstance->currentDateTime() <= minConsumerTime &&
+           m_modelInstance->currentDateTime() < m_modelInstance->endDateTime())
+    {
+      m_modelInstance->update();
+
+      if(progressChecker()->performStep(m_modelInstance->currentDateTime()))
+      {
+        setStatus(IModelComponent::Updated , "Simulation performed time-step | DateTime: " + QString::number(m_modelInstance->currentDateTime(), 'f') , progressChecker()->progress());
+      }
+    }
+
+    updateOutputValues(requiredOutputs);
+
+    currentDateTimeInternal()->setJulianDay(m_modelInstance->currentDateTime());
+
+    if(m_modelInstance->currentDateTime() >=  m_modelInstance->endDateTime())
+    {
+      setStatus(IModelComponent::Done , "Simulation finished successfully", 100);
+    }
+    else
+    {
+      if(progressChecker()->performStep(m_modelInstance->currentDateTime()))
+      {
+        setStatus(IModelComponent::Updated , "Simulation performed time-step | DateTime: " + QString::number(m_modelInstance->currentDateTime(), 'f') , progressChecker()->progress());
+      }
+      else
+      {
+        setStatus(IModelComponent::Updated);
+      }
+    }
+  }
 }
-
 
 void GWComponent::finish()
 {
+  if(isPrepared())
+  {
+    setStatus(IModelComponent::Finishing , "GWComponent with id " + id() + " is being disposed" , 100);
 
+    std::list<std::string> errors;
+    m_modelInstance->finalize(errors);
+    initializeFailureCleanUp();
+
+    setPrepared(false);
+    setInitialized(false);
+
+    setStatus(IModelComponent::Finished , "GWComponent with id " + id() + " has been disposed" , 100);
+    setStatus(IModelComponent::Created , "GWComponent with id " + id() + " ran successfully and has been re-created" , 100);
+  }
 }
 
 ICloneableModelComponent *GWComponent::parent() const
@@ -121,12 +178,10 @@ void GWComponent::initializeFailureCleanUp()
   }
 }
 
-
 void GWComponent::createArguments()
 {
   createInputFileArguments();
 }
-
 
 void GWComponent::createInputFileArguments()
 {
@@ -155,10 +210,10 @@ bool GWComponent::initializeArguments(QString &message)
 
   initialized = initializeInputFilesArguments(message);
 
-  //  if(initialized)
-  //  {
-  //    createGeometries();
-  //  }
+  if(initialized)
+  {
+    createGeometries();
+  }
 
   return initialized;
 }
@@ -173,34 +228,34 @@ bool GWComponent::initializeInputFilesArguments(QString &message)
   {
     initializeFailureCleanUp();
 
-    //    m_modelInstance = new HTSModel(this);
-    //    m_modelInstance->setInputFile(inputFile);
+    m_modelInstance = new GWModel(this);
+    m_modelInstance->setInputFile(inputFile);
 
-    //    QString netCDFOutput = QString((*m_inputFilesArgument)["Output NetCDF File"]);
-    //    if(!netCDFOutput.isEmpty() && !netCDFOutput.isNull())
-    //      m_modelInstance->setOutputNetCDFFile(QFileInfo(netCDFOutput));
+    QString netCDFOutput = QString((*m_inputFilesArgument)["Output NetCDF File"]);
+    if(!netCDFOutput.isEmpty() && !netCDFOutput.isNull())
+      m_modelInstance->setOutputNetCDFFile(QFileInfo(netCDFOutput));
 
     //    QString csvOutput = QString((*m_inputFilesArgument)["Output CSV File"]);
     //    if(!csvOutput.isEmpty() && !csvOutput.isNull())
     //      m_modelInstance->setOutputCSVFile(QFileInfo(csvOutput));
 
-    //    std::list<std::string> errors;
-    //    bool initialized = m_modelInstance->initialize(errors);
+    std::list<std::string> errors;
+    bool initialized = m_modelInstance->initialize(errors);
 
-    //    for (std::string errorMsg : errors)
-    //    {
-    //      message += "/n" + QString::fromStdString(errorMsg);
-    //    }
+    for (std::string errorMsg : errors)
+    {
+      message += "/n" + QString::fromStdString(errorMsg);
+    }
 
-    //    if(initialized)
-    //    {
-    //      timeHorizonInternal()->setJulianDay(m_modelInstance->startDateTime());
-    //      timeHorizonInternal()->setDuration(m_modelInstance->endDateTime() - m_modelInstance->startDateTime());
-    //      currentDateTimeInternal()->setJulianDay(m_modelInstance->startDateTime());
-    //      progressChecker()->reset(m_modelInstance->startDateTime(), m_modelInstance->endDateTime());
-    //    }
+    if(initialized)
+    {
+      timeHorizonInternal()->setJulianDay(m_modelInstance->startDateTime());
+      timeHorizonInternal()->setDuration(m_modelInstance->endDateTime() - m_modelInstance->startDateTime());
+      currentDateTimeInternal()->setJulianDay(m_modelInstance->startDateTime());
+      progressChecker()->reset(m_modelInstance->startDateTime(), m_modelInstance->endDateTime());
+    }
 
-    //    return initialized;
+    return initialized;
   }
   else
   {
@@ -219,21 +274,21 @@ void GWComponent::createGeometries()
 
   for(int i = 0; i < m_modelInstance->numElements() ; i++)
   {
-    //    Element *element = m_modelInstance->getElement(i);
-    //    ElementJunction *from = element->upstreamJunction;
-    //    ElementJunction *to   = element->downstreamJunction;
+    Element *element = m_modelInstance->getElement(i);
+    ElementJunction *from = element->upstreamJunction;
+    ElementJunction *to   = element->downstreamJunction;
 
-    //    HCLineString *lineString = new HCLineString(QString::fromStdString(element->id));
-    //    lineString->setMarker(i);
-    //    HCPoint *p1 = new HCPoint(from->x , from->y, QString::fromStdString(from->id), lineString);
-    //    HCPoint *p2 = new HCPoint(to->x , to->y, QString::fromStdString(to->id), lineString);
-    //    lineString->addPoint(p1);
-    //    lineString->addPoint(p2);
+    HCLineString *lineString = new HCLineString(QString::fromStdString(element->id));
+    lineString->setMarker(i);
+    HCPoint *p1 = new HCPoint(from->x , from->y, QString::fromStdString(from->id), lineString);
+    HCPoint *p2 = new HCPoint(to->x , to->y, QString::fromStdString(to->id), lineString);
+    lineString->addPoint(p1);
+    lineString->addPoint(p2);
 
-    //    m_elementJunctionGeometries.push_back(QSharedPointer<HCPoint>(new HCPoint(from->x , from->y, from->z, QString::fromStdString(from->id), nullptr)));
-    //    m_elementJunctionGeometries.push_back(QSharedPointer<HCPoint>(new HCPoint(to->x , to->y, to->z, QString::fromStdString(to->id), nullptr)));
+    m_elementJunctionGeometries.push_back(QSharedPointer<HCPoint>(new HCPoint(from->x , from->y, from->z, QString::fromStdString(from->id), nullptr)));
+    m_elementJunctionGeometries.push_back(QSharedPointer<HCPoint>(new HCPoint(to->x , to->y, to->z, QString::fromStdString(to->id), nullptr)));
 
-    //    m_elementGeometries.push_back(QSharedPointer<HCLineString>(lineString));
+    m_elementGeometries.push_back(QSharedPointer<HCLineString>(lineString));
   }
 }
 

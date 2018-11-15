@@ -4,28 +4,31 @@
 #include "variable.h"
 #include "gwcomponent_global.h"
 
+#include <string>
+#include <vector>
+
 struct Element;
 struct ElementJunction;
 class GWModel;
 
 struct ElementCell
 {
-    enum Orientation
-    {
-      Left,
-      Right
-    };
 
-    ElementCell(int index,
-                double widthFactor,
-                Orientation orientation,
-                Element *parent);
+
+    ElementCell(int cindex,
+                Element *cparent);
 
     ~ElementCell();
 
+    /*!
+     * \brief index
+     */
     int index ;
 
-    Orientation orientation;
+    /*!
+     * \brief elementCellIndex
+     */
+    int elementCellIndex;
 
     /*!
      * \brief hydHead
@@ -38,14 +41,29 @@ struct ElementCell
     Variable prevHydHead;
 
     /*!
-     * \brief gradHydHeadX
+     * \brief edgeHydHead
      */
-    Variable gradHydHeadX;
+    Variable *edgeHydHead;
 
     /*!
-     * \brief gradHydHeadY
+     * \brief gradHydHeadX
      */
-    Variable gradHydHeadY;
+    Variable *gradHydHead;
+
+    /*!
+     * \brief externalInflow
+     */
+    double externalInflow;
+
+    /*!
+     * \brief totalMassBalance
+     */
+    double totalMassBalance;
+
+    /*!
+     * \brief totalExternalInflow
+     */
+    double totalExternalInflow;
 
     /*!
      * \brief temperature (°C)
@@ -56,6 +74,21 @@ struct ElementCell
      * \brief prevTemperature (°C)
      */
     Variable prevTemperature;
+
+    /*!
+     * \brief externalHeatFluxes
+     */
+    double externalHeatFluxes;
+
+    /*!
+     * \brief totalHeatBalance
+     */
+    double totalHeatBalance;
+
+    /*!
+     * \brief totalExternalHeatBalance
+     */
+    double totalExternalHeatBalance;
 
     /*!
      * \brief numSolutes
@@ -72,6 +105,14 @@ struct ElementCell
      */
     Variable *prevSoluteConcs;
 
+    /*!
+     * \brief externalSoluteFluxes
+     */
+    double *externalSoluteFluxes;
+
+    /*!
+     * \brief totalSoluteMassBalance
+     */
     double *totalSoluteMassBalance;
 
     /*!
@@ -115,6 +156,11 @@ struct ElementCell
     double width;
 
     /*!
+     * \brief specificStorage
+     */
+    double specificStorage;
+
+    /*!
      * \brief dispersionX
      */
     double dispersionX;
@@ -123,16 +169,6 @@ struct ElementCell
      * \brief dispersionY
      */
     double dispersionY;
-
-    /*!
-     * \brief volume
-     */
-    double volume;
-
-    /*!
-     * \brief prevVolume
-     */
-    double prevVolume;
 
     /*!
      * \brief edgeFlows
@@ -148,6 +184,46 @@ struct ElementCell
      * \brief edgeDepths
      */
     double *edgeDepths;
+
+    /*!
+     * \brief depth
+     */
+    double depth;
+
+    /*!
+     * \brief edgeBottomElevs
+     */
+    double *edgeBottomElevs;
+
+    /*!
+     * \brief edgeHydCons
+     */
+    double *edgeHydCons;
+
+    /*!
+     * \brief centerY
+     */
+    double centerY;
+
+    /*!
+     * \brief volume
+     */
+    double volume;
+
+    /*!
+     * \brief prevVolume
+     */
+    double prevVolume;
+
+    /*!
+     * \brief dVolumedt
+     */
+    double dVolumedt;
+
+    /*!
+     * \brief start
+     */
+    bool start;
 
     /*!
      * \brief initialize
@@ -181,7 +257,7 @@ struct ElementCell
      * \param S
      * \return
      */
-    double computeDSoluteDt(double dt, double S[]);
+    double computeDSoluteDt(double dt, double S[], int soluteIndex);
 
     /*!
      * \brief computeCourantNumber
@@ -190,15 +266,14 @@ struct ElementCell
     double computeCourantFactor() const;
 
     /*!
-     * \brief commputeDispersionFactor
-     * \return
-     */
-    double computeDispersionFactor() const;
-
-    /*!
      * \brief computeDerivedHydraulics
      */
     void computeDerivedHydraulics();
+
+    /*!
+     * \brief computeDVolumeDt
+     */
+    void computeDVolumeDt();
 
     /*!
      * \brief computeMassBalance
@@ -216,6 +291,14 @@ struct ElementCell
      * \param soluteIndex
      */
     void computeSoluteBalance(double timeStep, int soluteIndex);
+
+  private:
+
+    void computeEdgeHydCons();
+
+    void computeEdgeDepths();
+
+    void computeEdgeDepths(double H[]);
 
   private:
 
@@ -268,28 +351,102 @@ struct GWCOMPONENT_EXPORT Element
     */
    double z;
 
-   int numLeftCells;
-
-   double leftWidth;
-
-   double *leftCellWidthFactors;
-
-   int numRightCells;
-
-   double rightWidth;
-
-   double *rightCellWidthFactors;
-
+   /*!
+    * \brief length
+    */
    double length;
 
-   ElementCell *elementCells;
+   /*!
+    * \brief upstreamElement
+    */
+   Element *upstreamElement;
 
+   /*!
+    * \brief downstreamElement
+    */
+   Element *downstreamElement;
+
+   /*!
+    * \brief fromJunction
+    */
+   ElementJunction *upstreamJunction;
+
+   /*!
+    * \brief toJunction
+    */
+   ElementJunction *downstreamJunction;
+
+   /*!
+    * \brief channelWidth
+    */
+   double channelWidth;
+
+   /*!
+    * \brief channelWSE
+    */
+   double channelWSE;
+
+   /*!
+    * \brief channelTemperature
+    */
+   double channelTemperature;
+
+   /*!
+    * \brief channelConductance
+    */
+   double channelBedHydCond;
+
+   /*!
+    * \brief channelBedThickness
+    */
+   double channelBedThickness;
+
+
+   /*!
+    * \brief channelSoluteConcs
+    */
+   double *channelSoluteConcs;
+
+   /*!
+    * \brief elementCells
+    */
+   std::vector<ElementCell*> elementCells;
+
+   /*!
+    * \brief model
+    */
+   GWModel *model;
+
+   /*!
+    * \brief initialize
+    */
    void initialize();
 
+   /*!
+    * \brief initializeElementCells
+    */
    void initializeElementCells();
 
+
+
+
+  private:
+
+   /*!
+    * \brief initializeSolutes
+    */
    void initializeSolutes();
 
-}
+   /*!
+    * \brief setUpstreamElement
+    */
+   void setUpstreamElement();
+
+   /*!
+    * \brief setDownStreamElement
+    */
+   void setDownStreamElement();
+
+};
 
 #endif // ELEMENT_H

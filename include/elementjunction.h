@@ -17,38 +17,23 @@
 *  \warning
 */
 
-#ifndef ELEMENJUNCTION_H
-#define ELEMENJUNCTION_H
+#ifndef ELEMENTJUNCTION_H
+#define ELEMENTJUNCTION_H
 
 #include <string>
 #include <set>
 
-#include "variable.h"
-
-class HTSModel;
-class HCVertex;
+class GWModel;
 struct Element;
 
-/*!
- * \brief The ElementJunction struct represents the endpoints for the individual channel elemenets
- */
 struct ElementJunction
 {
-
-    enum JunctionType
-    {
-      NoElement = 0,
-      SingleElement = 1,
-      DoubleElement = 2,
-      MultiElement = 3
-    };
-
     /*!
      * \brief ElementJunction
      * \param numsolutes - Number of solutes
      * \param model -
      */
-    ElementJunction(const std::string &id, double x, double y, double z, HTSModel *model);
+    ElementJunction(const std::string &id, double x, double y, double z, GWModel *model);
 
     /*!
      * \brief ~ElementJunction - Deletes the ElementJunction and its associated data.
@@ -81,14 +66,9 @@ struct ElementJunction
     double z;
 
     /*!
-     * \brief junctionType
-     */
-    JunctionType junctionType;
-
-    /*!
      * \brief model
      */
-    HTSModel *model;
+    GWModel *model;
 
     /*!
      * \brief incomingElements
@@ -102,4 +82,4 @@ struct ElementJunction
 
 };
 
-#endif // ELEMENJUNCTION_H
+#endif // ELEMENTJUNCTION_H

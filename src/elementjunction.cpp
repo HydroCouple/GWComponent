@@ -1,5 +1,5 @@
 /*!
-*  \file    ElementJunction.cpp
+*  \file    elementjunction.cpp
 *  \author  Caleb Amoa Buahin <caleb.buahin@gmail.com>
 *  \version 1.0.0
 *  \section Description
@@ -21,19 +21,18 @@
 #include "stdafx.h"
 #include "elementjunction.h"
 #include "element.h"
+#include "gwmodel.h"
 
 #include <math.h>
 
-ElementJunction::ElementJunction(const std::string &id, double x, double y, double z, HTSModel *model)
-  :id(id), x(x), y(y), z(z),
+ElementJunction::ElementJunction(const std::string &id, double x, double y, double z, GWModel *model)
+  : id(id), x(x), y(y), z(z),
     model(model)
 {
-
 }
 
 ElementJunction::~ElementJunction()
 {
-
   while (outgoingElements.size())
   {
     Element *element = *outgoingElements.begin();
@@ -46,3 +45,5 @@ ElementJunction::~ElementJunction()
     delete element;
   }
 }
+
+
