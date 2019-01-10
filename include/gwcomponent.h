@@ -28,6 +28,9 @@ class Dimension;
 class GWModel;
 class Unit;
 class HCGeometry;
+class ElementInput;
+class ElementOutput;
+class Quantity;
 
 class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
     public virtual HydroCouple::ICloneableModelComponent
@@ -72,6 +75,11 @@ class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
      */
     void finish() override;
 
+    /*!
+     * \brief modelInstance
+     * \return
+     */
+    GWModel *modelInstance() const;
 
     /*!
      * \brief parent
@@ -137,9 +145,46 @@ class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
     void createInputs() override;
 
     /*!
+     * \brief createChannelWSEInput
+     */
+    void createChannelWSEInput();
+
+    /*!
+     * \brief createChannelWidthInput
+     */
+    void createChannelWidthInput();
+
+    /*!
+     * \brief createChannelTemperatureInput
+     */
+    void createChannelTemperatureInput();
+
+    /*!
+     * \brief createChannelSoluteInput
+     * \param soluteIndex
+     */
+    void createChannelSoluteInput(int soluteIndex);
+
+    /*!
      * \brief createOutputs
      */
     void createOutputs() override;
+
+    /*!
+     * \brief createChannelOutflowOutput
+     */
+    void createChannelOutflowOutput();
+
+    /*!
+     * \brief createChannelOutflowHeatFluxOutput
+     */
+    void createChannelOutflowHeatFluxOutput();
+
+    /*!
+     * \brief createChannelOutflowSoluteFluxOutput
+     * \param soluteIndex
+     */
+    void createChannelOutflowSoluteFluxOutput(int soluteIndex);
 
   private:
 
@@ -152,7 +197,21 @@ class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
     IdBasedArgumentString *m_inputFilesArgument;
 
     Dimension *m_timeDimension,
-              *m_geometryDimension;
+    *m_geometryDimension;
+
+    Unit *m_radiationFluxUnit,
+         *m_heatFluxUnit,
+         *m_temperatureUnit,
+         *m_soluteUnit,
+         *m_soluteFluxUnit;
+
+    Quantity *m_soluteConcQuantity, *m_soluteConcFluxQuantity;
+
+    ElementInput *m_channelWSEInput, *m_channelWidthInput, *m_channelTemperatureInput;
+    std::vector<ElementInput*> m_channelSoluteInputs;
+
+    ElementOutput *m_channelOutflowOutput, *m_channelOutflowHeatOutput;
+    std::vector<ElementOutput*> m_channelOutflowSoluteOutputs;
 
     std::vector<QSharedPointer<HCGeometry>> m_elementGeometries;
     std::vector<QSharedPointer<HCGeometry>> m_elementJunctionGeometries;

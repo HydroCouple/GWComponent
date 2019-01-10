@@ -16,7 +16,7 @@
 *  \todo
 *  \warning
 */
-
+#include "stdafx.h"
 #include "gwmodel.h"
 #include "elementjunction.h"
 #include "element.h"
@@ -282,6 +282,9 @@ void GWModel::setNumSolutes(int numSolutes)
   if(numSolutes >= 0)
   {
     m_solutes.resize(numSolutes);
+    m_solute_first_order_k.resize(numSolutes, 0.0);
+    m_solute_kd.resize(numSolutes, 0.0);
+    m_solute_molecular_diff.resize(numSolutes, 0.0);
     m_maxSolute.resize(numSolutes, 0.0);
     m_minSolute.resize(numSolutes, 0.0);
     m_totalSoluteMassBalance.resize(numSolutes, 0.0);
@@ -386,6 +389,11 @@ void GWModel::setNumRightElementCells(int value)
   m_numRightCellsPerElement = value;
 }
 
+int GWModel::numElementCells() const
+{
+  return m_numLeftCellsPerElement + m_numRightCellsPerElement;
+}
+
 int GWModel::numElements() const
 {
   return (int)m_elements.size();
@@ -480,6 +488,8 @@ bool GWModel::finalize(std::list<std::string> &errors)
   for(IBoundaryCondition *boundaryCondition : m_boundaryConditions)
     delete boundaryCondition;
 
+  m_timeSeries.clear();
+
   m_boundaryConditions.clear();
 
   return true;
@@ -547,16 +557,18 @@ bool GWModel::initializeElements(std::list<string> &errors)
 
     for(int f = m_numLeftCellsPerElement - 1; f > -1; f--)
     {
-      runningY -= element->elementCells[f]->width;
-      element->elementCells[f]->centerY  = runningY + element->elementCells[f]->width / 2.0;
+      ElementCell *elementCell = element->elementCells[f];
+      runningY -= elementCell->width;
+      elementCell->centerY  = runningY + elementCell->width / 2.0;
     }
 
     runningY = 0.0;
 
     for(int f = m_numLeftCellsPerElement; f < m_totalCellsPerElement; f++)
     {
-      runningY += element->elementCells[f]->width;
-      element->elementCells[f]->centerY  = runningY - element->elementCells[f]->width / 2.0;
+      ElementCell *elementCell = element->elementCells[f];
+      runningY += elementCell->width;
+      elementCell->centerY  = runningY - elementCell->width / 2.0;
     }
   }
 
@@ -574,7 +586,6 @@ bool GWModel::initializeElements(std::list<string> &errors)
 
   m_currSoluteConcs.resize(m_solutes.size(), std::vector<double>(m_totalCellsPerElement * m_elements.size(), 0.0));
   m_outSoluteConcs.resize(m_solutes.size(), std::vector<double>(m_totalCellsPerElement * m_elements.size(), 0.0));
-
 
   return true;
 }
@@ -613,20 +624,28 @@ bool GWModel::initializeBoundaryConditions(std::list<string> &errors)
   return true;
 }
 
-bool GWModel::findProfile(Element *from, Element *to, std::list<Element *> &profile)
+bool GWModel::findProfile(Element *from, Element *to, std::vector<Element *> &profile)
 {
-  for(Element *outgoing : from->downstreamJunction->outgoingElements)
+  if(from == to)
   {
-    if(outgoing == to)
+    profile.push_back(from);
+    return true;
+  }
+  else
+  {
+    for(Element *outgoing : from->downstreamJunction->outgoingElements)
     {
-      profile.push_back(from);
-      profile.push_back(outgoing);
-      return true;
-    }
-    else if(findProfile(outgoing, to, profile))
-    {
-      profile.push_front(from);
-      return true;
+      if(outgoing == to)
+      {
+        profile.push_back(from);
+        profile.push_back(outgoing);
+        return true;
+      }
+      else if(findProfile(outgoing, to, profile))
+      {
+        profile.insert(profile.begin(), from);
+        return true;
+      }
     }
   }
 

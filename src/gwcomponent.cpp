@@ -16,7 +16,7 @@
 *  \todo
 *  \warning
 */
-
+#include "stdafx.h"
 #include "gwcomponent.h"
 #include "core/valuedefinition.h"
 #include "spatial/linestring.h"
@@ -29,6 +29,10 @@
 #include "element.h"
 #include "elementjunction.h"
 #include "spatial/point.h"
+#include "elementinput.h"
+#include "elementoutput.h"
+#include "core/unit.h"
+#include "core/unitdimensions.h"
 
 using namespace HydroCouple;
 using namespace HydroCouple::Temporal;
@@ -44,6 +48,34 @@ GWComponent::GWComponent(const QString &id, GWComponentInfo *modelComponentInfo)
 {
   m_timeDimension = new Dimension("TimeDimension",this);
   m_geometryDimension = new Dimension("ElementGeometryDimension", this);
+
+
+  m_heatFluxUnit = new Unit(this);
+  m_heatFluxUnit->setCaption("Heat Source (W or J/s)");
+  m_heatFluxUnit->setConversionFactorToSI(1.0);
+  m_heatFluxUnit->setOffsetToSI(0.0);
+  m_heatFluxUnit->dimensionsInternal()->setPower(HydroCouple::Mass, 1.0);
+  m_heatFluxUnit->dimensionsInternal()->setPower(HydroCouple::Length, 2.0);
+  m_heatFluxUnit->dimensionsInternal()->setPower(HydroCouple::Time, -3.0);
+
+  m_temperatureUnit = new Unit(this);
+  m_temperatureUnit->setCaption("Temperature (°C)");
+  m_temperatureUnit->setConversionFactorToSI(1.0);
+  m_temperatureUnit->setOffsetToSI(273.15);
+  m_temperatureUnit->dimensionsInternal()->setPower(HydroCouple::Temperature, 1.0);
+
+  m_soluteFluxUnit = new Unit(this);
+  m_soluteFluxUnit->setCaption("Mass Flux (kg/s)");
+  m_soluteFluxUnit->dimensionsInternal()->setPower(HydroCouple::Mass, 1.0);
+  m_soluteFluxUnit->dimensionsInternal()->setPower(HydroCouple::Time, -1.0);
+
+  m_soluteUnit = new Unit(this);
+  m_soluteUnit->setCaption("Concentration (kg/m^3)");
+  m_soluteUnit->dimensionsInternal()->setPower(HydroCouple::Mass, 1.0);
+  m_soluteUnit->dimensionsInternal()->setPower(HydroCouple::Length, -3.0);
+
+  m_soluteConcQuantity = new Quantity(QVariant::Double, m_soluteUnit, this);
+  m_soluteConcFluxQuantity = new Quantity(QVariant::Double, m_soluteFluxUnit, this);
 
   createArguments();
 }
@@ -146,12 +178,20 @@ void GWComponent::finish()
     m_modelInstance->finalize(errors);
     initializeFailureCleanUp();
 
+    m_channelSoluteInputs.clear();
+    m_channelOutflowSoluteOutputs.clear();
+
     setPrepared(false);
     setInitialized(false);
 
     setStatus(IModelComponent::Finished , "GWComponent with id " + id() + " has been disposed" , 100);
     setStatus(IModelComponent::Created , "GWComponent with id " + id() + " ran successfully and has been re-created" , 100);
   }
+}
+
+GWModel *GWComponent::modelInstance() const
+{
+  return m_modelInstance;
 }
 
 ICloneableModelComponent *GWComponent::parent() const
@@ -294,10 +334,248 @@ void GWComponent::createGeometries()
 
 void GWComponent::createInputs()
 {
+  createChannelWSEInput();
 
+  createChannelWidthInput();
+
+  createChannelTemperatureInput();
+
+  for(int i = 0; i < m_modelInstance->numSolutes() ; i++)
+  {
+    createChannelSoluteInput(i);
+  }
+}
+
+void GWComponent::createChannelWSEInput()
+{
+  Quantity *wseQuantity = Quantity::lengthInMeters(this);
+
+  m_channelWSEInput = new ElementInput("ChannelWSEInput",
+                                       m_timeDimension,
+                                       m_geometryDimension,
+                                       wseQuantity,
+                                       ElementInput::ChannelWSE,
+                                       this);
+
+  m_channelWSEInput->setCaption("Channel Water Surface Elevation (m)");
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  m_channelWSEInput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, m_channelWSEInput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), m_channelWSEInput);
+
+  m_channelWSEInput->addTime(dt1);
+  m_channelWSEInput->addTime(dt2);
+
+  addInput(m_channelWSEInput);
+}
+
+void GWComponent::createChannelWidthInput()
+{
+  Quantity *widthQuantity = Quantity::lengthInMeters(this);
+
+  m_channelWidthInput = new ElementInput("ChannelWidthInput",
+                                         m_timeDimension,
+                                         m_geometryDimension,
+                                         widthQuantity,
+                                         ElementInput::ChannelWidth,
+                                         this);
+
+  m_channelWidthInput->setCaption("Channel Width (m)");
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  m_channelWidthInput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, m_channelWidthInput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), m_channelWidthInput);
+
+  m_channelWidthInput->addTime(dt1);
+  m_channelWidthInput->addTime(dt2);
+
+  addInput(m_channelWidthInput);
+}
+
+void GWComponent::createChannelTemperatureInput()
+{
+  Quantity *temperatureQuantity = new Quantity(QVariant::Double, m_temperatureUnit, this);
+
+  m_channelTemperatureInput = new ElementInput("ChannelTemperatureInput",
+                                               m_timeDimension,
+                                               m_geometryDimension,
+                                               temperatureQuantity,
+                                               ElementInput::ChannelTemperature,
+                                               this);
+
+  m_channelTemperatureInput->setCaption("Channel Temperature (m)");
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  m_channelTemperatureInput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, m_channelTemperatureInput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), m_channelTemperatureInput);
+
+  m_channelTemperatureInput->addTime(dt1);
+  m_channelTemperatureInput->addTime(dt2);
+
+  addInput(m_channelTemperatureInput);
+}
+
+void GWComponent::createChannelSoluteInput(int soluteIndex)
+{
+  QString soluteName = QString::fromStdString(m_modelInstance->solute(soluteIndex));
+
+  ElementInput *channelSoluteInput = new ElementInput("Channel" + soluteName + "Input",
+                                                     m_timeDimension,
+                                                     m_geometryDimension,
+                                                     m_soluteConcQuantity,
+                                                     ElementInput::ChannelSolute,
+                                                     this);
+
+  channelSoluteInput->setCaption("Channel " + soluteName + " Concentration (kg/m^3)");
+  channelSoluteInput->setSoluteIndex(soluteIndex);
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  channelSoluteInput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, channelSoluteInput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), channelSoluteInput);
+
+  channelSoluteInput->addTime(dt1);
+  channelSoluteInput->addTime(dt2);
+
+  m_channelSoluteInputs.push_back(channelSoluteInput);
+  addInput(channelSoluteInput);
 }
 
 void GWComponent::createOutputs()
 {
+  createChannelOutflowOutput();
 
+  createChannelOutflowHeatFluxOutput();
+
+  for(int i = 0; i < m_modelInstance->numSolutes() ; i++)
+  {
+    createChannelOutflowSoluteFluxOutput(i);
+  }
+}
+
+void GWComponent::createChannelOutflowOutput()
+{
+  Quantity *flowQuantity = Quantity::flowInCMS(this);
+
+  m_channelOutflowOutput = new ElementOutput("ChannelOutflow",
+                                             m_timeDimension,
+                                             m_geometryDimension,
+                                             flowQuantity,
+                                             ElementOutput::ChannelOutflow,
+                                             this);
+
+  m_channelOutflowOutput->setCaption("Channel Outflow (m^3/s)");
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  m_channelOutflowOutput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, m_channelOutflowOutput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), m_channelOutflowOutput);
+
+  m_channelOutflowOutput->addTime(dt1);
+  m_channelOutflowOutput->addTime(dt2);
+
+  addOutput(m_channelOutflowOutput);
+}
+
+void GWComponent::createChannelOutflowHeatFluxOutput()
+{
+  Quantity *heatQuantity = new Quantity(QVariant::Double, m_heatFluxUnit, this);
+
+  m_channelOutflowHeatOutput = new ElementOutput("ChannelOutflowHeat",
+                                                 m_timeDimension,
+                                                 m_geometryDimension,
+                                                 heatQuantity,
+                                                 ElementOutput::ChannelOuflowHeatFlux,
+                                                 this);
+
+  m_channelOutflowHeatOutput->setCaption("Channel Outflow Heat (J/s)");
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  m_channelOutflowHeatOutput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, m_channelOutflowHeatOutput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), m_channelOutflowHeatOutput);
+
+  m_channelOutflowHeatOutput->addTime(dt1);
+  m_channelOutflowHeatOutput->addTime(dt2);
+
+  addOutput(m_channelOutflowHeatOutput);
+}
+
+void GWComponent::createChannelOutflowSoluteFluxOutput(int soluteIndex)
+{
+
+  QString soluteName = QString::fromStdString(m_modelInstance->solute(soluteIndex));
+
+  ElementOutput *channelOutflowSoluteOutput = new ElementOutput("ChannelOutflow" + soluteName,
+                                                                m_timeDimension,
+                                                                m_geometryDimension,
+                                                                m_soluteConcFluxQuantity,
+                                                                ElementOutput::ChannelOutflowSoluteFlux,
+                                                                this);
+
+  channelOutflowSoluteOutput->setCaption("Channel Outflow " + soluteName + " Flux (kg/s)");
+  channelOutflowSoluteOutput->setSoluteIndex(soluteIndex);
+
+  QList<QSharedPointer<HCGeometry>> geometries;
+
+  for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+  {
+    geometries.append(lineString);
+  }
+
+  channelOutflowSoluteOutput->addGeometries(geometries);
+
+  SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime()- 1.0/1000000.0, channelOutflowSoluteOutput);
+  SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), channelOutflowSoluteOutput);
+
+  channelOutflowSoluteOutput->addTime(dt1);
+  channelOutflowSoluteOutput->addTime(dt2);
+
+  m_channelOutflowSoluteOutputs.push_back(channelOutflowSoluteOutput);
+  addOutput(channelOutflowSoluteOutput);
 }

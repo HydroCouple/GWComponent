@@ -30,8 +30,8 @@
         <Dimension Id="IdDimension" Caption="Dimension for identifiers" Length="2"/>
     </Dimensions>
     <Values>
-        <Value Id="Input File">/Users/calebbuahin/Documents/Projects/HydroCouple/GWComponent/examples/singh2004/hydropeaking.inp</Value>
-        <Value Id="Output NetCDF File">/Users/calebbuahin/Documents/Projects/HydroCouple/GWComponent/examples/singh2004/hydropeaking.nc</Value>
+        <Value Id="Input File">/Users/calebbuahin/Documents/Projects/HydroCouple/GWComponent/examples/Singh2004/hydropeaking.inp</Value>
+        <Value Id="Output NetCDF File">/Users/calebbuahin/Documents/Projects/HydroCouple/GWComponent/examples/Singh2004/hydropeaking.nc</Value>
     </Values>
 </IdBasedArgument>
                 </Argument>

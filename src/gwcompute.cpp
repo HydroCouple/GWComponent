@@ -18,34 +18,55 @@ void GWModel::update()
 
     m_timeStep = computeTimeStep();
 
-    computeDerivedHydraulics();
+    calculatePreComputedHydHeadVariables();
 
     solveHydHead(m_timeStep);
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-    for(int j = 0; j < 2; j++)
+    if(m_solveHeatTransport && m_solutes.size())
     {
-      switch (j)
-      {
-        case 0:
-          {
-            if(m_solveHeatTransport)
-              solveHeatTransport(m_timeStep);
-          }
-          break;
-        case 1:
-          {
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-            for(int i = 0 ; i < (int)m_solutes.size(); i++)
+      for(int j = 0; j < 2; j++)
+      {
+        switch (j)
+        {
+          case 0:
             {
-              solveSoluteTransport(i, m_timeStep);
+              calculatePreComputedTempVariables();
+              solveHeatTransport(m_timeStep);
             }
-          }
-          break;
+            break;
+          case 1:
+            {
+              calculatePreComputedSoluteVariables();
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+              for(int i = 0 ; i < (int)m_solutes.size(); i++)
+              {
+                solveSoluteTransport(i, m_timeStep);
+              }
+            }
+            break;
+        }
+      }
+    }
+    else if(m_solveHeatTransport)
+    {
+      calculatePreComputedTempVariables();
+      solveHeatTransport(m_timeStep);
+    }
+    else if(m_solutes.size())
+    {
+      calculatePreComputedSoluteVariables();
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int i = 0 ; i < (int)m_solutes.size(); i++)
+      {
+        solveSoluteTransport(i, m_timeStep);
       }
     }
 
@@ -83,10 +104,8 @@ void GWModel::prepareForNextTimeStep()
     {
       ElementCell *elementCell = element->elementCells[j];
 
-      elementCell->computeDVolumeDt();
-
       elementCell->computeMassBalance(m_timeStep);
-      m_totalMassBalance = elementCell->totalMassBalance;
+      m_totalMassBalance += elementCell->totalMassBalance;
 
       elementCell->computeHeatBalance(m_timeStep);
       m_totalHeatBalance += elementCell->totalHeatBalance;
@@ -130,27 +149,95 @@ void GWModel::applyInitialConditions()
 
   applyBoundaryConditions(m_currentDateTime);
 
+  calculatePreComputedHydHeadVariables();
+
+  calculatePreComputedTempVariables();
+
+  calculatePreComputedSoluteVariables();
+
   //Write initial output
   writeOutput();
 
   //Set next output time
   m_nextOutputTime += m_outputInterval / 86400.0;
 
-  for(size_t i = 0; i < m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-    ElementCell *leftCell = element->elementCells[99];
-    ElementCell *rightCell = element->elementCells[100];
-    leftCell->edgeHydHead[0].isBC = true;
-    rightCell->edgeHydHead[2].isBC = true;
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //    Element *element = m_elements[i];
 
-    double amplitude = 1.0;
-    double phase = 0.0;
-    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-    leftCell->edgeHydHead[0].value = head;
-    rightCell->edgeHydHead[2].value = head;
-  }
+  //    ElementCell *leftCell = element->elementCells[0];
+  //    ElementCell *rightCell = element->elementCells[m_totalCellsPerElement - 1];
+
+  //    leftCell->edgeGradHydHead[2].isBC = true;
+  //    rightCell->edgeGradHydHead[0].isBC = true;
+
+  //    leftCell->edgeTemperatures[2].isBC = true;
+  //    leftCell->edgeTemperatures[2].value = 12;
+
+  //    leftCell->edgeGradHydHead[2].value = 0.05;
+  //    rightCell->edgeGradHydHead[0].value = -0.05;
+  //  }
+
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //    Element *element = m_elements[i];
+
+  //    ElementCell *leftCell = element->elementCells[0];
+  //    ElementCell *rightCell = element->elementCells[m_totalCellsPerElement - 1];
+
+  //    leftCell->gradHydHead[2].isBC = true;
+  //    rightCell->gradHydHead[0].isBC = true;
+
+  //    leftCell->edgeTemperatures[2].isBC = true;
+  //    leftCell->edgeTemperatures[2].value = 10;
+
+  //    leftCell->gradHydHead[2].value = 0.01;
+  //    rightCell->gradHydHead[0].value = -0.01;
+  //  }
+
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //  Element *element = m_elements[0];
+
+  //  ElementCell *leftCell = element->elementCells[0];
+  //  ElementCell *rightCell = element->elementCells[0];
+  //  leftCell->edgeSoluteConcs[0][0].isBC = true;
+  //  rightCell->edgeSoluteConcs[0][2].isBC = true;
+
+  //  leftCell->edgeSoluteConcs[0][0].value = 0;
+  //  rightCell->edgeSoluteConcs[0][2].value = 10;
+
+  //  rightCell->soluteConcs[0].value = rightCell->prevSoluteConcs[0].value = 10.0;
+  //  }
+
+
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //  Element *element = m_elements[2];
+  //  ElementCell *leftCell = element->elementCells[99];
+  //  ElementCell *rightCell = element->elementCells[100];
+  //  leftCell->edgeHydHead[0].isBC = true;
+  //  rightCell->edgeHydHead[2].isBC = true;
+
+  //  double amplitude = 1.0;
+  //  double phase = 0.0;
+  //  double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
+  //  double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
+  //  leftCell->edgeHydHead[0].value = head;
+  //  rightCell->edgeHydHead[2].value = head;
+  //  }
+
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //    Element *element = m_elements[i];
+
+  //    double amplitude = 1.0;
+  //    double phase = 0.0;
+  //    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
+  //    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
+  //    element->channelWSE = head;
+  //  }
+
 }
 
 void GWModel::applyBoundaryConditions(double dateTime)
@@ -166,13 +253,19 @@ void GWModel::applyBoundaryConditions(double dateTime)
     for(size_t j = 0; j < element->elementCells.size(); j++)
     {
       ElementCell *elementCell = element->elementCells[j];
-      elementCell->externalInflow = 0;
-      elementCell->externalHeatFluxes = 0;
+      elementCell->externalInflow = 0.0;
+      elementCell->externalHeatFluxes = 0.0;
 
-      for(size_t j = 0; j < m_solutes.size(); j++)
+      for(size_t k = 0; k < m_solutes.size(); k++)
       {
-        elementCell->externalSoluteFluxes[j] = 0.0;
+        elementCell->externalSoluteFluxes[k] = 0.0;
       }
+
+      //      if(m_currentDateTime - m_startDateTime >= 1.0 && i == 42 && j == 103)
+      //      if(m_currentDateTime - m_startDateTime >= 1.0 && j == 50 && i == 9)
+      //      {
+      //        elementCell->externalHeatFluxes += -60.0 *  elementCell->depth;
+      //      }
     }
   }
 
@@ -186,22 +279,34 @@ void GWModel::applyBoundaryConditions(double dateTime)
   }
 
 
-  for(size_t i = 0; i < m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-    ElementCell *leftCell = element->elementCells[99];
-    ElementCell *rightCell = element->elementCells[100];
-    leftCell->edgeHydHead[0].isBC = true;
-    rightCell->edgeHydHead[2].isBC = true;
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //  Element *element = m_elements[2];
+  //  ElementCell *leftCell = element->elementCells[99];
+  //  ElementCell *rightCell = element->elementCells[100];
+  //  leftCell->edgeHydHead[0].isBC = true;
+  //  rightCell->edgeHydHead[2].isBC = true;
+
+  //  double amplitude = 1.0;
+  //  double phase = 0.0;
+  //  double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
+  //  double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
+  //  leftCell->edgeHydHead[0].value = head;
+  //  rightCell->edgeHydHead[2].value = head;
+
+  //  }
 
 
-    double amplitude = 1.0;
-    double phase = 0.0;
-    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-    leftCell->edgeHydHead[0].value = head;
-    rightCell->edgeHydHead[2].value = head;
-  }
+  //  for(size_t i = 0; i < m_elements.size(); i++)
+  //  {
+  //    Element *element = m_elements[i];
+  //    double amplitude = 1.0;
+  //    double phase = 0.0;
+  //    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
+  //    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
+  //    element->channelWSE = head;
+  //  }
+
 }
 
 double GWModel::computeTimeStep()
@@ -242,9 +347,10 @@ double GWModel::computeTimeStep()
 
         for(int j = 0; j < m_totalCellsPerElement; j++)
         {
-          double courantFactor = element->elementCells[j]->computeCourantFactor();
+          ElementCell *elementCell = element->elementCells[j];
+          double courantFactor = max(elementCell->computeCourantFactor(), elementCell->computeDiffusionFactor());
 
-          if(!(std::isinf(courantFactor) || std::isnan(courantFactor)) && courantFactor > maxCourantFactor)
+          if(/*!(std::isinf(courantFactor) || std::isnan(courantFactor)) &&*/ courantFactor > maxCourantFactor)
           {
             maxCourantFactor = courantFactor;
           }
@@ -268,16 +374,60 @@ double GWModel::computeTimeStep()
   return timeStep;
 }
 
-void GWModel::computeDerivedHydraulics()
+void GWModel::calculatePreComputedHydHeadVariables()
 {
+#ifdef USE_OPENMP
+//#pragma omp parallel for
+#endif
   for(int i = 0 ; i < (int)m_elements.size()  ; i++)
   {
     Element *element = m_elements[i];
+    element->channelInflow = 0.0;
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
-      elementCell->computeDerivedHydraulics();
+      elementCell->calculatePreComputedHydHeadVariables();
+    }
+  }
+}
+
+void GWModel::calculatePreComputedTempVariables()
+{
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+  for(int i = 0 ; i < (int)m_elements.size()  ; i++)
+  {
+    Element *element = m_elements[i];
+    element->channelHeatFlux = 0.0;
+
+    for(int j = 0; j < m_totalCellsPerElement; j++)
+    {
+      ElementCell *elementCell = element->elementCells[j];
+      elementCell->calculatePreComputedTempVariables();
+    }
+  }
+}
+
+void GWModel::calculatePreComputedSoluteVariables()
+{
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+  for(int i = 0 ; i < (int)m_elements.size()  ; i++)
+  {
+    Element *element = m_elements[i];
+
+    for(size_t j = 0; j < m_solutes.size(); j++)
+    {
+      element->channelSoluteFlux[j] = 0.0;
+    }
+
+    for(int j = 0; j < m_totalCellsPerElement; j++)
+    {
+      ElementCell *elementCell = element->elementCells[j];
+      elementCell->calculatePreComputedSoluteVariables();
     }
   }
 }
@@ -321,6 +471,7 @@ void GWModel::solveHydHead(double timeStep)
       ElementCell *elementCell = element->elementCells[j];
       double outHydHead = m_outHydHead[elementCell->index];
       elementCell->hydHead.value = outHydHead;
+      elementCell->computeEdgeDepths();
     }
   }
 }
@@ -452,7 +603,7 @@ void GWModel::computeDTDt(double t, double y[], double dydt[], void *userData)
     for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
     {
       ElementCell  *elementCell = element->elementCells[j];
-      double DTDt = elementCell->computeDHydHeadDt(dt,y);
+      double DTDt = elementCell->computeDTDt(dt,y);
       dydt[elementCell->index] = DTDt;
     }
   }

@@ -27,8 +27,11 @@ Element::Element(const std::string &id, ElementJunction *upstream, ElementJuncti
     upstreamJunction(upstream),
     downstreamJunction(downstream),
     channelSoluteConcs(nullptr),
+    channelSoluteFlux(nullptr),
     model(model)
 {
+
+  hydConZ = model->m_hydConZ;
 
   upstream->outgoingElements.insert(this);
   downstream->incomingElements.insert(this);
@@ -44,7 +47,6 @@ Element::Element(const std::string &id, ElementJunction *upstream, ElementJuncti
 Element::~Element()
 {
 
-
   for(ElementCell *cell : elementCells)
     delete cell;
 
@@ -52,7 +54,8 @@ Element::~Element()
 
   if(channelSoluteConcs != nullptr)
   {
-    delete [] channelSoluteConcs;
+    delete[] channelSoluteConcs;
+    delete[] channelSoluteFlux;
   }
 
   upstreamJunction->outgoingElements.erase(this);
@@ -63,6 +66,11 @@ void Element::initialize()
 {
   setUpstreamElement();
   setDownStreamElement();
+
+  channelInflow = 0.0;
+  channelHeatFlux = 0.0;
+
+  initializeSolutes();
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)
   {
@@ -89,6 +97,13 @@ void Element::initializeSolutes()
   if(channelSoluteConcs)
   {
     delete[] channelSoluteConcs; channelSoluteConcs = nullptr;
+    delete[] channelSoluteFlux; channelSoluteFlux = nullptr;
+  }
+
+  if(model->numSolutes() > 0)
+  {
+    channelSoluteConcs = new double[model->numSolutes()]();
+    channelSoluteFlux = new double[model->numSolutes()]();
   }
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)

@@ -50,7 +50,11 @@ HEADERS += ./include/stdafx.h\
            ./include/element.h \
            ./include/elementjunction.h \
            ./include/iboundarycondition.h \
-           ./include/abstracttimeseriesbc.h
+           ./include/edgebc.h \
+           ./include/elementcellsourcebc.h \
+           ./include/channelbc.h \
+           ./include/elementinput.h \
+           ./include/elementoutput.h
 
 SOURCES +=./src/stdafx.cpp \
           ./src/gwcomponent.cpp \
@@ -59,11 +63,15 @@ SOURCES +=./src/stdafx.cpp \
           ./src/test/gwcomponenttest.cpp \
           ./src/gwmodel.cpp \
           ./src/gwmodelio.cpp \
-          ./src/abstracttimeseriesbc.cpp \
           ./src/gwcompute.cpp \
           ./src/elementjunction.cpp \
           ./src/element.cpp \
-          ./src/elementcell.cpp
+          ./src/elementcell.cpp \
+          ./src/edgebc.cpp \
+          ./src/elementcellsourcebc.cpp \
+          ./src/channelbc.cpp \
+          ./src/elementinput.cpp \
+          ./src/elementoutput.cpp
 
 macx{
 
@@ -256,7 +264,7 @@ CONFIG(debug, debug|release) {
     }
 
     macx {
-#       QMAKE_CXXFLAGS += -O3
+       QMAKE_CXXFLAGS += -O3
     }
 
     linux {

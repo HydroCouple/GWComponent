@@ -16,7 +16,7 @@
 *  \todo
 *  \warning
 */
-
+#include "stdafx.h"
 #include <QTextStream>
 #include <QDateTime>
 
@@ -28,8 +28,10 @@
 #include "threadsafenetcdf/threadsafencfile.h"
 #include "threadsafenetcdf/threadsafencdim.h"
 #include "threadsafenetcdf/threadsafencatt.h"
-#include "timeseries.h"
-
+#include "temporal/timeseries.h"
+#include "edgebc.h"
+#include "elementcellsourcebc.h"
+#include "channelbc.h"
 
 #include <QDir>
 #include <QDate>
@@ -42,6 +44,8 @@ using namespace netCDF;
 using namespace netCDF::exceptions;
 
 #endif
+
+const float GWModel::dir[] = {-1.0,-1.0,1.0,1.0};
 
 bool GWModel::verbose() const
 {
@@ -132,6 +136,8 @@ bool GWModel::initializeInputFiles(list<string> &errors)
 
     if (file.open(QIODevice::ReadOnly))
     {
+      m_timeSeries.clear();
+
       m_delimiters = QRegExp("(\\,|\\t|\\;|\\s+)");
       int currentFlag = -1;
       m_addedSoluteCount = 0;
@@ -185,28 +191,19 @@ bool GWModel::initializeInputFiles(list<string> &errors)
                 readSuccess = readInputFileElementCellHydraulics(line, error);
                 break;
               case 8:
-                readSuccess = readInputFileElementCellBCHydHeadTag(line, error);
+                readSuccess = readInputFileElementCellInitConditions(line, error);
                 break;
               case 9:
-                readSuccess = readInputFileElementCellBCHydHeadDerivTag(line, error);
+                readSuccess = readInputFileElementCellBoundaryConditions(line, error);
                 break;
               case 10:
-                readSuccess = readInputFileElementCellBCFluxTag(line, error);
+                readSuccess = readInputFileTimeSeriesTag(line, error);
                 break;
               case 11:
-                readSuccess = readInputFileElementCellHeadDepFluxTag(line, error);
+                readSuccess = readInputFileElementCellSources(line, error);
                 break;
               case 12:
-                readSuccess = readInputFileElementCellTempInitTag(line, error);
-                break;
-              case 13:
-                readSuccess = readInputFileElementCellBCTempTag(line, error);
-                break;
-              case 14:
-                readSuccess = readInputFileElementCellSoluteInitTag(line, error);
-                break;
-              case 15:
-                readSuccess = readInputFileElementCellBCSoluteTag(line, error);
+                readSuccess = readInputFileChannelBoundaryConditions(line, error);
                 break;
             }
           }
@@ -433,6 +430,8 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     //ElementCells
     ThreadSafeNcDim elementCellsDim =  m_outputNetCDF->addDim("element_cells", m_totalCellsPerElement);
 
+    //Edges
+    ThreadSafeNcDim elementCellFaceDim = m_outputNetCDF->addDim("element_cell_face", 4);
 
     //hydraulics variables
     ThreadSafeNcVar lengthVar =  m_outputNetCDF->addVar("length", "float",
@@ -457,7 +456,7 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 
     std::vector<float> cell_widths(m_totalCellsPerElement, 0.0);
 
-    for(int i = 0; i < m_elements.size(); i++)
+    for(size_t i = 0; i < m_elements.size(); i++)
     {
       for(int j  = 0; j < m_totalCellsPerElement; j++)
       {
@@ -468,13 +467,86 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 
     cellWidths.putVar(cell_widths.data());
 
-
     //hydraulics variables
     ThreadSafeNcVar hydHeadVar =  m_outputNetCDF->addVar("hydraulic_head", "float",
                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
     hydHeadVar.putAtt("long_name", "Hydraulic Head");
     hydHeadVar.putAtt("units", "m");
     m_outNetCDFVariables["hydraulic_head"] = hydHeadVar;
+
+    ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("saturated_depth", "float",
+                                                         std::vector<std::string>({"time", "elements", "element_cells"}));
+    satDepthVar.putAtt("long_name", "Saturated Depth");
+    satDepthVar.putAtt("units", "m");
+    m_outNetCDFVariables["saturated_depth"] = satDepthVar;
+
+
+    ThreadSafeNcVar totalElementCellMassBalanceVar =  m_outputNetCDF->addVar("total_element_cell_mass_balance", "float",
+                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
+    totalElementCellMassBalanceVar.putAtt("long_name", "Total Element Cell Mass Balance");
+    totalElementCellMassBalanceVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["total_element_cell_mass_balance"] = totalElementCellMassBalanceVar;
+
+    ThreadSafeNcVar elementExternalInflowVar =  m_outputNetCDF->addVar("element_external_inflow", "float",
+                                                                       std::vector<std::string>({"time", "elements","element_cells"}));
+    elementExternalInflowVar.putAtt("long_name", "Element Cell External Inflow");
+    elementExternalInflowVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["element_cell_external_inflow"] = elementExternalInflowVar;
+
+    ThreadSafeNcVar elementCellExternalInflowVar =  m_outputNetCDF->addVar("element_cell_external_inflow", "float",
+                                                                           std::vector<std::string>({"time", "elements"}));
+    elementCellExternalInflowVar.putAtt("long_name", "Element External Inflow");
+    elementCellExternalInflowVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["element_external_inflow"] = elementCellExternalInflowVar;
+
+
+    ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_inflow", "float",
+                                                                      std::vector<std::string>({"time", "elements"}));
+    elementChannelInflowVar.putAtt("long_name", "Element Channel Inflow");
+    elementChannelInflowVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["element_channel_inflow"] = elementChannelInflowVar;
+
+
+    ThreadSafeNcVar elementCellChannelInflowVar =  m_outputNetCDF->addVar("element_cell_channel_inflow", "float",
+                                                                          std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellChannelInflowVar.putAtt("long_name", "Element Cell Channel Inflow");
+    elementCellChannelInflowVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["element_cell_channel_inflow"] = elementCellChannelInflowVar;
+
+
+    ThreadSafeNcVar elementCellFaceFlowVar =  m_outputNetCDF->addVar("element_cell_face_flow", "float",
+                                                                     std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
+    elementCellFaceFlowVar.putAtt("long_name", "Element Cell Face Flow");
+    elementCellFaceFlowVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["element_cell_face_flow"] = elementCellFaceFlowVar;
+
+
+    ThreadSafeNcVar elementCellFaceSupVelVar =  m_outputNetCDF->addVar("element_cell_face_sup_velocity", "float",
+                                                                       std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
+    elementCellFaceSupVelVar.putAtt("long_name", "Element Cell Face Superficial Velocity");
+    elementCellFaceSupVelVar.putAtt("units", "m/s");
+    m_outNetCDFVariables["element_cell_face_sup_velocity"] = elementCellFaceSupVelVar;
+
+
+    ThreadSafeNcVar elementCellSupVelXVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_x", "float",
+                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellSupVelXVar.putAtt("long_name", "Element Cell Superficial X Velocity");
+    elementCellSupVelXVar.putAtt("units", "m/s");
+    m_outNetCDFVariables["element_cell_sup_velocity_x"] = elementCellSupVelXVar;
+
+
+    ThreadSafeNcVar elementCellSupVelYVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_y", "float",
+                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellSupVelYVar.putAtt("long_name", "Element Cell Superficial Y Velocity");
+    elementCellSupVelYVar.putAtt("units", "m/s");
+    m_outNetCDFVariables["element_cell_sup_velocity_y"] = elementCellSupVelYVar;
+
+
+    ThreadSafeNcVar totalMassBalanceVar =  m_outputNetCDF->addVar("total_mass_balance", "float",
+                                                                  std::vector<std::string>({"time"}));
+    totalMassBalanceVar.putAtt("long_name", "Total Mass Balance");
+    totalMassBalanceVar.putAtt("units", "m^3");
+    m_outNetCDFVariables["total_mass_balance"] = totalMassBalanceVar;
 
     ThreadSafeNcVar tempVar =  m_outputNetCDF->addVar("temperature", "float",
                                                       std::vector<std::string>({"time", "elements", "element_cells"}));
@@ -483,12 +555,52 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     m_outNetCDFVariables["temperature"] = tempVar;
 
 
+    ThreadSafeNcVar elementExternalHeatFluxVar =  m_outputNetCDF->addVar("element_external_heat_flux", "float",
+                                                                         std::vector<std::string>({"time", "elements"}));
+    elementExternalHeatFluxVar.putAtt("long_name", "Element External Heat Flux");
+    elementExternalHeatFluxVar.putAtt("units", "J/s");
+    m_outNetCDFVariables["element_external_heat_flux"] = elementExternalHeatFluxVar;
+
+
+    ThreadSafeNcVar elementCellExternalHeatFluxVar =  m_outputNetCDF->addVar("element_cell_external_heat_flux", "float",
+                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellExternalHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
+    elementCellExternalHeatFluxVar.putAtt("units", "J/s");
+    m_outNetCDFVariables["element_cell_external_heat_flux"] = elementCellExternalHeatFluxVar;
+
+
+    ThreadSafeNcVar elementChannelHeatFluxVar =  m_outputNetCDF->addVar("element_channel_heat_flux", "float",
+                                                                        std::vector<std::string>({"time", "elements"}));
+    elementChannelHeatFluxVar.putAtt("long_name", "Element Channel Heat Flux");
+    elementChannelHeatFluxVar.putAtt("units", "J/s");
+    m_outNetCDFVariables["element_channel_heat_flux"] = elementChannelHeatFluxVar;
+
+
+    ThreadSafeNcVar elementCellChannelHeatFluxVar =  m_outputNetCDF->addVar("element_cell_channel_heat_flux", "float",
+                                                                            std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellChannelHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
+    elementCellChannelHeatFluxVar.putAtt("units", "J/s");
+    m_outNetCDFVariables["element_cell_channel_heat_flux"] = elementCellChannelHeatFluxVar;
+
+
+    ThreadSafeNcVar elementChannelWSEVar =  m_outputNetCDF->addVar("element_channel_wse", "float",
+                                                                   std::vector<std::string>({"time", "elements"}));
+    elementChannelWSEVar.putAtt("long_name", "Element Channel Water Surface Elevation");
+    elementChannelWSEVar.putAtt("units", "m");
+    m_outNetCDFVariables["element_channel_wse"] = elementChannelWSEVar;
+
+
     ThreadSafeNcVar solutesVar =  m_outputNetCDF->addVar("solute_concentration", "float",
                                                          std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
     solutesVar.putAtt("long_name", "Solute Concentration");
     solutesVar.putAtt("units", "kg/m^3");
     m_outNetCDFVariables["solute_concentration"] = solutesVar;
 
+    ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
+                                                         std::vector<std::string>({"time", "solutes", "elements"}));
+    elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
+    elementChannelSoluteFluxVar.putAtt("units", "kg/s");
+    m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
 
     m_outputNetCDF->sync();
 
@@ -726,10 +838,17 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
                 m_hydHeadSolver->setSolverType(ODESolver::RKQS);
                 break;
               case 3:
-                m_hydHeadSolver->setSolverType(ODESolver::CVODE_ADAMS);
+                {
+                  m_hydHeadSolver->setSolverType(ODESolver::CVODE_ADAMS);
+                  m_hydHeadSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
+                }
                 break;
               case 4:
-                m_hydHeadSolver->setSolverType(ODESolver::CVODE_BDF);
+                {
+                  m_hydHeadSolver->setSolverType(ODESolver::CVODE_BDF);
+                  m_hydHeadSolver->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
+                  m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                }
                 break;
               case 5:
                 m_hydHeadSolver->setSolverType(ODESolver::EULER);
@@ -848,10 +967,17 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
                 m_heatSolver->setSolverType(ODESolver::RKQS);
                 break;
               case 3:
-                m_heatSolver->setSolverType(ODESolver::CVODE_ADAMS);
+                {
+                  m_heatSolver->setSolverType(ODESolver::CVODE_ADAMS);
+                  m_heatSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
+                }
                 break;
               case 4:
-                m_heatSolver->setSolverType(ODESolver::CVODE_BDF);
+                {
+                  m_heatSolver->setSolverType(ODESolver::CVODE_BDF);
+                  m_heatSolver->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
+                  m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                }
                 break;
               case 5:
                 m_heatSolver->setSolverType(ODESolver::EULER);
@@ -1263,6 +1389,291 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
+      case 31:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_dispersivityX = options[1].toDouble(&ok);
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "dispersivity in x-direction error";
+            return false;
+          }
+        }
+        break;
+      case 32:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_dispersivityY = options[1].toDouble(&ok);
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "dispersivity in Y-direction error";
+            return false;
+          }
+        }
+        break;
+      case 33:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+            std::string code = options[1].toUpper().toStdString();
+            auto it = m_advectionFlags.find(code);
+
+            int advectionMode = -1;
+
+            if (it != m_advectionFlags.end())
+              advectionMode = it->second;
+
+            switch (advectionMode)
+            {
+              case 1:
+                m_advectionMode = AdvectionDiscretizationMode::Upwind;
+                break;
+              case 2:
+                m_advectionMode = AdvectionDiscretizationMode::Central;
+                break;
+              case 3:
+                m_advectionMode = AdvectionDiscretizationMode::Hybrid;
+                break;
+              case 4:
+                m_advectionMode = AdvectionDiscretizationMode::TVD;
+                break;
+              default:
+                foundError = true;
+                break;
+            }
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Advection mode error";
+            return false;
+          }
+        }
+        break;
+      case 34:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+            bool ok;
+            int fluxLimiter = options[1].toInt(&ok);
+            foundError = fluxLimiter > 7 || !ok;
+
+            m_TVDFluxLimiter = fluxLimiter;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if(foundError)
+          {
+            errorMessage = "TVD flux limiter error";
+            return false;
+          }
+        }
+        break;
+      case 35:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_waterThermalConductivity = options[1].toDouble(&ok);
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Water thermal conductivity error";
+            return false;
+          }
+        }
+        break;
+      case 36:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_sedThermalConductivity = options[1].toDouble(&ok);
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Sediment thermal conductivity error";
+            return false;
+          }
+        }
+        break;
+      case 37:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_hydConZ = options[1].toDouble(&ok);
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Default hydraulic conductivity Z direction";
+            return false;
+          }
+        }
+        break;
+      case 38:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+            std::string code = options[1].toUpper().toStdString();
+            auto it = m_linearSolverTypeFlags.find(code);
+
+            int linearSolver = -1;
+
+            if (it != m_linearSolverTypeFlags.end())
+              linearSolver = it->second;
+
+            switch (linearSolver)
+            {
+              case 1:
+                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                break;
+              case 2:
+                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::FGMRES);
+                break;
+              case 3:
+                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::Bi_CGStab);
+                break;
+              case 4:
+                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::TFQMR);
+                break;
+              case 5:
+                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::PCG);
+                break;
+              default:
+                foundError = true;
+                break;
+            }
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Hydraulic head  linear solver type error";
+            return false;
+          }
+        }
+        break;
+      case 39:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+            std::string code = options[1].toUpper().toStdString();
+            auto it = m_linearSolverTypeFlags.find(code);
+
+            int linearSolver = -1;
+
+            if (it != m_linearSolverTypeFlags.end())
+              linearSolver = it->second;
+
+            switch (linearSolver)
+            {
+              case 1:
+                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                break;
+              case 2:
+                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::FGMRES);
+                break;
+              case 3:
+                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::Bi_CGStab);
+                break;
+              case 4:
+                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::TFQMR);
+                break;
+              case 5:
+                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::PCG);
+                break;
+              default:
+                foundError = true;
+                break;
+            }
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Hydraulic heat  linear solver type error";
+            return false;
+          }
+        }
+        break;
     }
   }
 
@@ -1294,7 +1705,7 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
 {
   QStringList columns = line.split(m_delimiters, QString::SkipEmptyParts);
 
-  if (columns.size() == 4)
+  if (columns.size() == 7)
   {
     bool foundError = false;
 
@@ -1302,7 +1713,7 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
     {
       m_solutes[m_addedSoluteCount] = columns[0].toStdString();
 
-      std::string solverType = columns[1].toStdString();
+      std::string solverType = columns[4].toStdString();
       auto it = m_solverTypeFlags.find(solverType);
 
       if (it != m_solverTypeFlags.end())
@@ -1318,10 +1729,17 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
             m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::RKQS);
             break;
           case 3:
-            m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_ADAMS);
+            {
+              m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_ADAMS);
+              m_soluteSolvers[m_addedSoluteCount]->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
+            }
             break;
           case 4:
-            m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_BDF);
+            {
+              m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_BDF);
+              m_soluteSolvers[m_addedSoluteCount]->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
+              m_soluteSolvers[m_addedSoluteCount]->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+            }
             break;
           case 5:
             m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::EULER);
@@ -1338,7 +1756,45 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
         }
 
         bool parsed;
-        double abs_tol = columns[2].toDouble(&parsed);
+
+        double first_order_k = columns[1].toDouble(&parsed);
+
+        if(parsed)
+        {
+          m_solute_first_order_k[m_addedSoluteCount] = first_order_k;
+        }
+        else
+        {
+          errorMessage = "Invalid solute first order reaction rate";
+          return false;
+        }
+
+
+        double kd = columns[2].toDouble(&parsed);
+
+        if(parsed)
+        {
+          m_solute_kd[m_addedSoluteCount] = kd;
+        }
+        else
+        {
+          errorMessage = "Invalid solute first order reaction rate";
+          return false;
+        }
+
+        double molDiff = columns[3].toDouble(&parsed);
+
+        if(parsed)
+        {
+          m_solute_molecular_diff[m_addedSoluteCount] = molDiff;
+        }
+        else
+        {
+          errorMessage = "Invalid solute molecular diffision";
+          return false;
+        }
+
+        double abs_tol = columns[5].toDouble(&parsed);
 
         if (parsed)
         {
@@ -1350,7 +1806,7 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
           return false;
         }
 
-        double rel_tol = columns[3].toDouble(&parsed);
+        double rel_tol = columns[6].toDouble(&parsed);
 
         if (parsed)
         {
@@ -1429,7 +1885,7 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
   errorMessage = "";
   QStringList columns = line.split(m_delimiters, QString::SkipEmptyParts);
 
-  if (columns.size() > 10)
+  if (columns.size() > 11)
   {
     QString id = columns[0];
     QString fromId = columns[1];
@@ -1456,27 +1912,31 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
       bool hydHeadOk ;
       double hydHead = columns[6].toDouble(&hydHeadOk);
 
-      bool topWidthOk ;
-      double topWidth = columns[7].toDouble(&topWidthOk);
+      bool hydConZOk;
+      double hydConZ = columns[7].toDouble(&hydConZOk);
 
-      bool depthOk ;
-      double depth = columns[8].toDouble(&depthOk);
+      bool topWidthOk ;
+      double topWidth = columns[8].toDouble(&topWidthOk);
+
+      bool wseOk ;
+      double wse = columns[9].toDouble(&wseOk);
 
       bool bedThicknessOk ;
-      double bedThickness = columns[9].toDouble(&bedThicknessOk);
+      double bedThickness = columns[10].toDouble(&bedThicknessOk);
 
       bool channelKOk ;
-      double channelK = columns[10].toDouble(&channelKOk);
+      double channelK = columns[11].toDouble(&channelKOk);
 
       if (lengthOk && hydHeadOk && topWidthOk && bottomElOk && topElOk &&
-          depthOk && bedThicknessOk && channelKOk)
+          wseOk && bedThicknessOk && channelKOk && hydConZOk)
       {
         Element *element = addElement(id.toStdString(), ej1, ej2);
         element->length = length;
-        element->channelWSE = element->z + depth;
+        element->channelWSE = wse;
         element->channelBedThickness = bedThickness;
         element->channelWidth = topWidth;
         element->channelBedHydCond = channelK;
+        element->hydConZ = hydConZ;
 
         for(int j = 0 ; j < m_totalCellsPerElement; j++)
         {
@@ -1486,22 +1946,22 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
           elementCell->topElev = topEl;
         }
 
-        int currentColumn = 11;
+        int currentColumn = 12;
 
         if(m_solveHeatTransport)
         {
-          if(columns.size() > 11)
+          if(columns.size() > 12)
           {
             bool tempOk;
-            double temp = columns[11].toDouble(&tempOk);
+            double temp = columns[12].toDouble(&tempOk);
 
             bool chanTempOk;
-            double chanTemp = columns[12].toDouble(&chanTempOk);
+            double chanTemp = columns[13].toDouble(&chanTempOk);
 
             if(tempOk && chanTempOk)
             {
               element->channelTemperature = chanTemp;
-              currentColumn = 13;
+              currentColumn = 14;
 
               for(int j = 0 ; j < m_totalCellsPerElement; j++)
               {
@@ -1522,7 +1982,7 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
           }
         }
 
-        if(columns.size() ==  currentColumn - 1 + m_solutes.size() * 2)
+        if((int)columns.size() == currentColumn - 1 + (int)m_solutes.size() * 2)
         {
           int soluteIndex = 0;
 
@@ -1671,7 +2131,8 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             {
               for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
               {
-                element->elementCells[j]->hydConX = values[j];
+                ElementCell *n = element->elementCells[j];
+                n->hydCon[1] = values[j];
               }
             }
             break;
@@ -1679,7 +2140,8 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             {
               for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
               {
-                element->elementCells[j]->hydConY = values[j];
+                ElementCell *n = element->elementCells[j];
+                n->hydCon[0] = values[j];
               }
             }
             break;
@@ -1734,44 +2196,896 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
   return true;
 }
 
-bool GWModel::readInputFileElementCellBCHydHeadTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileElementCellInitConditions(const QString &line, QString &errorMessage)
 {
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
+  if(options.size() ==  2 + m_numLeftCellsPerElement + m_numRightCellsPerElement)
+  {
+    QString elementId = options[0].trimmed();
+
+    std::vector<double> values;
+
+    for(int i = 2; i < options.size(); i++)
+    {
+      bool valueOk;
+      double value = options[i].toDouble(&valueOk);
+
+      if(valueOk)
+      {
+        values.push_back(value);
+      }
+      else
+      {
+        errorMessage = "Specified variable is not number";
+        return false;
+      }
+    }
+
+    if(m_elementsById.find(elementId.toStdString()) != m_elementsById.end())
+    {
+      Element *element = m_elementsById[elementId.toStdString()];
+      QString variable = options[1];
+
+      if(!variable.compare("Temperature", Qt::CaseInsensitive))
+      {
+        for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+        {
+          element->elementCells[j]->hydHead.value = values[j];
+          element->elementCells[j]->prevHydHead.value = values[j];
+        }
+      }
+      else
+      {
+        for(size_t k = 0; k < m_solutes.size(); k++)
+        {
+          QString solute = QString::fromStdString(m_solutes[k]);
+
+          if(!variable.compare(solute, Qt::CaseInsensitive))
+          {
+            for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+            {
+              element->elementCells[j]->soluteConcs[k].value = values[j];
+              element->elementCells[j]->prevSoluteConcs[k].value = values[j];
+            }
+            break;
+          }
+        }
+      }
+    }
+    else
+    {
+      errorMessage = "Element specified not found: " + elementId;
+      return false;
+    }
+  }
+  else
+  {
+    errorMessage = "Number of columes must be of size " + QString::number(2 + m_numLeftCellsPerElement + m_numRightCellsPerElement);
+    return false;
+  }
+
+  return true;
 }
 
-bool GWModel::readInputFileElementCellBCHydHeadDerivTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileElementCellBoundaryConditions(const QString &line, QString &errorMessage)
 {
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
+  auto bcflag = m_BCFlags.find(options[0].toUpper().toStdString());
+
+  if(bcflag != m_BCFlags.end())
+  {
+    int flag = bcflag->second;
+
+    switch (flag)
+    {
+      case 1:
+      case 2:
+      case 3:
+      case 4:
+        {
+          if(options.size() == 8)
+          {
+            QString edge = options[1].toUpper();
+            std::string stdEdge = edge.toStdString();
+
+            auto edgeIt = m_edgeFlags.find(stdEdge);
+
+            if(edgeIt != m_edgeFlags.end())
+            {
+              int eFlag = edgeIt->second;
+              EdgeBC::Edge edgeFlag = (EdgeBC::Edge)eFlag;
+
+              QString fromId = options[2];
+              QString toId = options[3];
+
+              auto itFrom = m_elementsById.find(fromId.toStdString());
+              auto itTo = m_elementsById.find(toId.toStdString());
+
+              if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+              {
+                Element *fromElement = itFrom->second;
+                Element *toElement = itTo->second;
+
+                bool oks;
+                bool oke;
+
+                int startCell = options[4].toInt(&oks);
+                int endCell = options[5].toInt(&oke);
+
+                if(oks && oke && endCell >= startCell &&
+                   startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+                {
+                  QString type = options[6];
+
+                  if(!type.compare("Value", Qt::CaseInsensitive))
+                  {
+                    double value = options[7].toDouble(&oks);
+
+                    if(oks)
+                    {
+                      EdgeBC *boundaryCondition = new EdgeBC((EdgeBC::Variable)flag,
+                                                             edgeFlag,
+                                                             fromElement,
+                                                             toElement,
+                                                             startCell,
+                                                             endCell,
+                                                             this);
+
+                      QUuid uid = QUuid::createUuid();
+                      QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, this));
+
+                      ts->addRow(m_startDateTime, value);
+                      ts->addRow(m_endDateTime, value);
+
+                      m_timeSeries[ts->id().toStdString()] = ts;
+
+                      boundaryCondition->setTimeSeries(ts);
+
+                      m_boundaryConditions.push_back(boundaryCondition);
+                    }
+                    else
+                    {
+                      errorMessage = "Specified value is invalid";
+                      return false;
+                    }
+                  }
+                  else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+                  {
+                    std::string tsId = options[7].toStdString();
+                    auto tsIt = m_timeSeries.find(tsId);
+
+                    if(tsIt != m_timeSeries.end())
+                    {
+                      EdgeBC *boundaryCondition = new EdgeBC((EdgeBC::Variable)flag,
+                                                             edgeFlag,
+                                                             fromElement,
+                                                             toElement,
+                                                             startCell,
+                                                             endCell,
+                                                             this);
+
+                      boundaryCondition->setTimeSeries(tsIt->second);
+                      m_boundaryConditions.push_back(boundaryCondition);
+                    }
+                    else
+                    {
+                      errorMessage = "Specified timeseries was not found";
+                      return false;
+                    }
+                  }
+                  else
+                  {
+                    errorMessage = "Specified file type is invalid";
+                    return false;
+                  }
+                }
+                else
+                {
+                  errorMessage = "Start/end cell was not found or is invalid";
+                  return false;
+                }
+              }
+              else
+              {
+                errorMessage = "Start/end element was not found";
+                return false;
+              }
+            }
+            else
+            {
+              errorMessage = "Specified edge flag is invalid";
+              return false;
+            }
+          }
+          else
+          {
+            errorMessage = "Solute boundary condition must have 9 columns";
+            return false;
+          }
+        }
+        break;
+      case 5:
+      case 6:
+        {
+          return readInputFileElementCellSoluteBoundaryConditions(flag, options, errorMessage);
+        }
+        break;
+    }
+  }
+
+  return true;
 }
 
-bool GWModel::readInputFileElementCellBCFluxTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileElementCellSoluteBoundaryConditions(int variable, const QStringList &options, QString &errorMessage)
 {
+  if(options.size() == 9)
+  {
+    std::string solute = options[1].toStdString();
 
+    bool soluteFound = false;
+
+    for(size_t m = 0; m < m_solutes.size(); m++)
+    {
+      if(solute == m_solutes[m])
+      {
+        soluteFound = true;
+
+        QString edge = options[2].toUpper();
+        std::string stdEdge = edge.toStdString();
+
+        auto edgeIt = m_edgeFlags.find(stdEdge);
+
+        if(edgeIt != m_edgeFlags.end())
+        {
+          EdgeBC::Edge edgeFlag = (EdgeBC::Edge)edgeIt->second;
+          QString fromId = options[3];
+          QString toId = options[4];
+
+          auto itFrom = m_elementsById.find(fromId.toStdString());
+          auto itTo = m_elementsById.find(toId.toStdString());
+
+          if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+          {
+            Element *fromElement = itFrom->second;
+            Element *toElement = itTo->second;
+
+            bool oks;
+            bool oke;
+
+            int startCell = options[5].toInt(&oks);
+            int endCell = options[6].toInt(&oke);
+
+            if(oks && oke && endCell >= startCell &&
+               startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+            {
+              QString type = options[7];
+
+              if(!type.compare("Value", Qt::CaseInsensitive))
+              {
+                double value = options[8].toDouble(&oks);
+
+                if(oks)
+                {
+                  EdgeBC *boundaryCondition = new EdgeBC((EdgeBC::Variable)variable,
+                                                         edgeFlag,
+                                                         fromElement,
+                                                         toElement,
+                                                         startCell,
+                                                         endCell,
+                                                         this);
+                  boundaryCondition->setSoluteIndex(m);
+
+                  QUuid uid = QUuid::createUuid();
+                  QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, boundaryCondition));
+
+                  ts->addRow(m_startDateTime, value);
+                  ts->addRow(m_endDateTime, value);
+
+                  m_timeSeries[ts->id().toStdString()] = ts;
+
+                  boundaryCondition->setTimeSeries(ts);
+                  m_boundaryConditions.push_back(boundaryCondition);
+                }
+                else
+                {
+                  errorMessage = "Specified value is invalid";
+                  return false;
+                }
+              }
+              else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+              {
+                std::string tsId = options[8].toStdString();
+                auto tsIt = m_timeSeries.find(tsId);
+
+                if(tsIt != m_timeSeries.end())
+                {
+                  EdgeBC *boundaryCondition = new EdgeBC((EdgeBC::Variable)variable,
+                                                         edgeFlag,
+                                                         fromElement,
+                                                         toElement,
+                                                         startCell,
+                                                         endCell,
+                                                         this);
+
+                  boundaryCondition->setSoluteIndex(m);
+
+                  boundaryCondition->setTimeSeries(tsIt->second);
+                  m_boundaryConditions.push_back(boundaryCondition);
+                }
+                else
+                {
+                  errorMessage = "Specified timeseries was not found";
+                  return false;
+                }
+              }
+              else
+              {
+                errorMessage = "Specified file type is invalid";
+                return false;
+              }
+            }
+            else
+            {
+              errorMessage = "Start/end cell was not found or is invalid";
+              return false;
+            }
+          }
+          else
+          {
+            errorMessage = "Start/end element was not found";
+            return false;
+          }
+        }
+        else
+        {
+          errorMessage = "Specified edge flag is invalid";
+          return false;
+        }
+
+        break;
+      }
+    }
+
+    if(!soluteFound)
+    {
+      errorMessage = "Specified solute not found";
+      return false;
+    }
+  }
+  else
+  {
+    errorMessage = "Solute boundary condition must have 9 columns";
+    return false;
+  }
+
+  return true;
 }
 
-bool GWModel::readInputFileElementCellHeadDepFluxTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileElementCellSources(const QString &line, QString &errorMessage)
 {
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
+  auto srcflag = m_srcFlags.find(options[0].toUpper().toStdString());
+
+  if(srcflag != m_BCFlags.end())
+  {
+    int flag = srcflag->second;
+
+    switch (flag)
+    {
+      case 1:
+      case 2:
+        {
+          if(options.size() == 8)
+          {
+            QString fromId = options[1];
+            QString toId = options[2];
+
+            auto itFrom = m_elementsById.find(fromId.toStdString());
+            auto itTo = m_elementsById.find(toId.toStdString());
+
+            if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+            {
+              Element *fromElement = itFrom->second;
+              Element *toElement = itTo->second;
+
+              bool oks;
+              bool oke;
+
+              int startCell = options[3].toInt(&oks);
+              int endCell = options[4].toInt(&oke);
+
+              if(oks && oke && endCell >= startCell &&
+                 startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+              {
+
+                auto geomMult = m_geomMultFlags.find(options[5].toStdString());
+
+                if(geomMult != m_geomMultFlags.end())
+                {
+                  ElementCellSourceBC::GeometryMultiplier geomMultiplier = (ElementCellSourceBC::GeometryMultiplier)geomMult->second;
+
+                  QString type = options[6];
+
+                  if(!type.compare("Value", Qt::CaseInsensitive))
+                  {
+                    double value = options[7].toDouble(&oks);
+
+                    if(oks)
+                    {
+                      ElementCellSourceBC *sourceCondition = new ElementCellSourceBC((ElementCellSourceBC::Variable)flag,
+                                                                                     geomMultiplier,
+                                                                                     fromElement,
+                                                                                     toElement,
+                                                                                     startCell,
+                                                                                     endCell,
+                                                                                     this);
+
+                      QUuid uid = QUuid::createUuid();
+                      QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, sourceCondition));
+
+                      ts->addRow(m_startDateTime, value);
+                      ts->addRow(m_endDateTime, value);
+
+                      m_timeSeries[ts->id().toStdString()] = ts;
+
+                      sourceCondition->setTimeSeries(ts);
+                      m_boundaryConditions.push_back(sourceCondition);
+                    }
+                    else
+                    {
+                      errorMessage = "Specified value is invalid";
+                      return false;
+                    }
+                  }
+                  else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+                  {
+                    std::string tsId = options[7].toStdString();
+                    auto tsIt = m_timeSeries.find(tsId);
+
+                    if(tsIt != m_timeSeries.end())
+                    {
+                      ElementCellSourceBC *sourceCondition = new ElementCellSourceBC((ElementCellSourceBC::Variable)flag,
+                                                                                     geomMultiplier,
+                                                                                     fromElement,
+                                                                                     toElement,
+                                                                                     startCell,
+                                                                                     endCell,
+                                                                                     this);
+
+                      sourceCondition->setTimeSeries(tsIt->second);
+                      m_boundaryConditions.push_back(sourceCondition);
+                    }
+                    else
+                    {
+                      errorMessage = "Specified timeseries was not found";
+                      return false;
+                    }
+                  }
+                  else
+                  {
+                    errorMessage = "Specified file type is invalid";
+                    return false;
+                  }
+                }
+                else
+                {
+                  errorMessage = "Specified geometry multiplier is invalid";
+                  return false;
+                }
+              }
+              else
+              {
+                errorMessage = "Start/end cell was not found or is invalid";
+                return false;
+              }
+            }
+            else
+            {
+              errorMessage = "Start/end element was not found";
+              return false;
+            }
+
+          }
+          else
+          {
+            errorMessage = "Solute boundary condition must have 9 columns";
+            return false;
+          }
+        }
+        break;
+      case 3:
+        {
+
+          if(options.size() == 9)
+          {
+            std::string solute = options[1].toStdString();
+            bool soluteFound = false;
+
+            for(size_t m = 0; m < m_solutes.size(); m++)
+            {
+              if(solute == m_solutes[m])
+              {
+                soluteFound = true;
+                QString fromId = options[2];
+                QString toId = options[3];
+
+                auto itFrom = m_elementsById.find(fromId.toStdString());
+                auto itTo = m_elementsById.find(toId.toStdString());
+
+                if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+                {
+                  Element *fromElement = itFrom->second;
+                  Element *toElement = itTo->second;
+
+                  bool oks;
+                  bool oke;
+
+                  int startCell = options[4].toInt(&oks);
+                  int endCell = options[5].toInt(&oke);
+
+                  if(oks && oke && endCell >= startCell &&
+                     startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+                  {
+
+                    auto geomMult = m_geomMultFlags.find(options[6].toStdString());
+
+                    if(geomMult != m_geomMultFlags.end())
+                    {
+                      ElementCellSourceBC::GeometryMultiplier geomMultiplier = (ElementCellSourceBC::GeometryMultiplier)geomMult->second;
+
+                      QString type = options[7];
+
+                      if(!type.compare("Value", Qt::CaseInsensitive))
+                      {
+                        double value = options[8].toDouble(&oks);
+
+                        if(oks)
+                        {
+                          ElementCellSourceBC *sourceCondition = new ElementCellSourceBC((ElementCellSourceBC::Variable)flag,
+                                                                                         geomMultiplier,
+                                                                                         fromElement,
+                                                                                         toElement,
+                                                                                         startCell,
+                                                                                         endCell,
+                                                                                         this);
+
+                          QUuid uid = QUuid::createUuid();
+                          QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, sourceCondition));
+
+                          ts->addRow(m_startDateTime, value);
+                          ts->addRow(m_endDateTime, value);
+
+                          m_timeSeries[ts->id().toStdString()] = ts;
+
+                          sourceCondition->setTimeSeries(ts);
+                          m_boundaryConditions.push_back(sourceCondition);
+                        }
+                      }
+                      else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+                      {
+                        std::string tsId = options[8].toStdString();
+                        auto tsIt = m_timeSeries.find(tsId);
+
+                        if(tsIt != m_timeSeries.end())
+                        {
+                          ElementCellSourceBC *sourceCondition = new ElementCellSourceBC((ElementCellSourceBC::Variable)flag,
+                                                                                         geomMultiplier,
+                                                                                         fromElement,
+                                                                                         toElement,
+                                                                                         startCell,
+                                                                                         endCell,
+                                                                                         this);
+
+                          sourceCondition->setTimeSeries(tsIt->second);
+                          m_boundaryConditions.push_back(sourceCondition);
+                        }
+                        else
+                        {
+                          errorMessage = "Specified timeseries was not found";
+                          return false;
+                        }
+                      }
+                      else
+                      {
+                        errorMessage = "Specified file type is invalid";
+                        return false;
+                      }
+                    }
+                    else
+                    {
+                      errorMessage = "Specified geometry multiplier is invalid";
+                      return false;
+                    }
+                  }
+                  else
+                  {
+                    errorMessage = "Start/end cell was not found or is invalid";
+                    return false;
+                  }
+                }
+                else
+                {
+                  errorMessage = "Start/end element was not found";
+                  return false;
+                }
+
+                break;
+              }
+            }
+            if(!soluteFound)
+            {
+              errorMessage = "Specified solute not found";
+              return false;
+            }
+          }
+          else
+          {
+            errorMessage = "Solute boundary condition must have 9 columns";
+            return false;
+          }
+
+        }
+        break;
+    }
+  }
+
+  return true;
 }
 
-bool GWModel::readInputFileElementCellTempInitTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileTimeSeriesTag(const QString &line, QString &errorMessage)
 {
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
+  if(options.size() ==  2)
+  {
+    QFileInfo fileInfo(options[1].trimmed());
+
+    if (fileInfo.isRelative())
+      fileInfo = relativePathToAbsolute(fileInfo);
+
+    if(QFile::exists(fileInfo.absoluteFilePath()))
+    {
+      QSharedPointer<TimeSeries> timeSeries(TimeSeries::createTimeSeries(options[0], fileInfo, this));
+
+      if(!timeSeries.isNull())
+      {
+        m_timeSeries[timeSeries->id().toStdString()] = timeSeries;
+      }
+      else
+      {
+        errorMessage = "Timeseries specified is invalid";
+        return false;
+      }
+    }
+    else
+    {
+      errorMessage = "Specified filepath does not exist";
+      return false;
+    }
+  }
+  else
+  {
+    errorMessage = "TimeSeries must have two columns";
+    return false;
+  }
+
+  return true;
 }
 
-bool GWModel::readInputFileElementCellBCTempTag(const QString &line, QString &errorMessage)
+bool GWModel::readInputFileChannelBoundaryConditions(const QString &line, QString &errorMessage)
 {
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
-}
+  auto varflag = m_chanVarFlags.find(options[0].toUpper().toStdString());
 
-bool GWModel::readInputFileElementCellSoluteInitTag(const QString &line, QString &errorMessage)
-{
+  if(varflag != m_chanVarFlags.end())
+  {
+    int flag = varflag->second;
 
-}
+    switch (flag)
+    {
+      case 1:
+      case 2:
+      case 3:
+        {
+          if(options.size() == 5)
+          {
+            QString fromId = options[1];
+            QString toId = options[2];
 
-bool GWModel::readInputFileElementCellBCSoluteTag(const QString &line, QString &errorMessage)
-{
+            auto itFrom = m_elementsById.find(fromId.toStdString());
+            auto itTo = m_elementsById.find(toId.toStdString());
 
+            if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+            {
+              Element *fromElement = itFrom->second;
+              Element *toElement = itTo->second;
+
+              QString type = options[3];
+
+              if(!type.compare("Value", Qt::CaseInsensitive))
+              {
+                bool oks;
+                double value = options[4].toDouble(&oks);
+
+                if(oks)
+                {
+                  ChannelBC *channelBC = new ChannelBC((ChannelBC::Variable)flag,
+                                                       fromElement,
+                                                       toElement,
+                                                       this);
+
+                  QUuid uid = QUuid::createUuid();
+                  QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, channelBC));
+
+                  ts->addRow(m_startDateTime, value);
+                  ts->addRow(m_endDateTime, value);
+
+                  m_timeSeries[ts->id().toStdString()] = ts;
+
+                  channelBC->setTimeSeries(ts);
+                  m_boundaryConditions.push_back(channelBC);
+                }
+                else
+                {
+                  errorMessage = "Specified value is invalid";
+                  return false;
+                }
+              }
+              else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+              {
+                std::string tsId = options[4].toStdString();
+                auto tsIt = m_timeSeries.find(tsId);
+
+                if(tsIt != m_timeSeries.end())
+                {
+                  ChannelBC *channelBC = new ChannelBC((ChannelBC::Variable)flag,
+                                                       fromElement,
+                                                       toElement,
+                                                       this);
+
+                  channelBC->setTimeSeries(tsIt->second);
+                  m_boundaryConditions.push_back(channelBC);
+                }
+                else
+                {
+                  errorMessage = "Specified timeseries was not found";
+                  return false;
+                }
+              }
+              else
+              {
+                errorMessage = "Specified file type is invalid";
+                return false;
+              }
+            }
+            else
+            {
+              errorMessage = "Specified geometry multiplier is invalid";
+              return false;
+            }
+          }
+          else
+          {
+            errorMessage = "Solute boundary condition must have 9 columns";
+            return false;
+          }
+        }
+        break;
+      case 4:
+        {
+
+          if(options.size() == 6)
+          {
+            std::string solute = options[1].toStdString();
+            bool soluteFound = false;
+
+            for(size_t m = 0; m < m_solutes.size(); m++)
+            {
+              if(solute == m_solutes[m])
+              {
+                soluteFound = true;
+                QString fromId = options[2];
+                QString toId = options[3];
+
+                auto itFrom = m_elementsById.find(fromId.toStdString());
+                auto itTo = m_elementsById.find(toId.toStdString());
+
+                if(itFrom != m_elementsById.end() && itTo != m_elementsById.end())
+                {
+                  Element *fromElement = itFrom->second;
+                  Element *toElement = itTo->second;
+
+                  QString type = options[4];
+
+                  if(!type.compare("Value", Qt::CaseInsensitive))
+                  {
+                    bool oks;
+                    double value = options[5].toDouble(&oks);
+
+                    if(oks)
+                    {
+                      ChannelBC *channelBC = new ChannelBC((ChannelBC::Variable)flag,
+                                                           fromElement,
+                                                           toElement,
+                                                           this);
+
+                      QUuid uid = QUuid::createUuid();
+                      QSharedPointer<TimeSeries>ts(new TimeSeries(uid.toString(), 1, channelBC));
+                      ts->addRow(m_startDateTime, value);
+                      ts->addRow(m_endDateTime, value);
+
+                      m_timeSeries[ts->id().toStdString()] = ts;
+
+                      channelBC->setTimeSeries(ts);
+                      m_boundaryConditions.push_back(channelBC);
+
+                    }
+                    else
+                    {
+                      errorMessage = "Value specified is invalid";
+                      return false;
+                    }
+                  }
+                  else if(!type.compare("TimeSeries", Qt::CaseInsensitive))
+                  {
+                    std::string tsId = options[5].toStdString();
+                    auto tsIt = m_timeSeries.find(tsId);
+
+                    if(tsIt != m_timeSeries.end())
+                    {
+                      ChannelBC *channelBC = new ChannelBC((ChannelBC::Variable)flag,
+                                                           fromElement,
+                                                           toElement,
+                                                           this);
+
+                      channelBC->setTimeSeries(tsIt->second);
+                      m_boundaryConditions.push_back(channelBC);
+                    }
+                    else
+                    {
+                      errorMessage = "Specified timeseries was not found";
+                      return false;
+                    }
+                  }
+                  else
+                  {
+                    errorMessage = "Specified file type is invalid";
+                    return false;
+                  }
+
+                }
+                else
+                {
+                  errorMessage = "Start/end element was not found";
+                  return false;
+                }
+
+                break;
+              }
+            }
+
+            if(!soluteFound)
+            {
+              errorMessage = "Specified solute not found";
+              return false;
+            }
+          }
+          else
+          {
+            errorMessage = "Solute boundary condition must have 9 columns";
+            return false;
+          }
+
+        }
+        break;
+    }
+  }
+
+  return true;
 }
 
 void GWModel::writeOutput()
@@ -1804,8 +3118,24 @@ void GWModel::writeNetCDFOutput()
     m_outNetCDFVariables["time"].putVar(std::vector<size_t>({currentTime}), m_currentDateTime);
 
     float *hydHead = new float[m_elements.size() * m_totalCellsPerElement];
+    float *satDepth = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementInflow = new float[m_elements.size()]();
+    float *elementCellInflow = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementChannelInflow = new float[m_elements.size()]();
+    float *elementCellChannelInflow = new float[m_elements.size() * m_totalCellsPerElement];
+    float *totalElementCellMassBal = new float[m_elements.size() * m_totalCellsPerElement];
+    float *edgeFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
+    float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
     float *temperature = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementHeatFlux = new float[m_elements.size()];
+    float *elementCellHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementChannelHeatFlux = new float[m_elements.size()]();
+    float *elementCellChannelHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementCellWSE = new float[m_elements.size()];
     float *solutes = new float[m_elements.size() * m_solutes.size() * m_totalCellsPerElement];
+    float *channelSoluteFlux = new float[m_elements.size() * m_solutes.size()];
 
 
 #ifdef USE_OPENMP
@@ -1814,40 +3144,123 @@ void GWModel::writeNetCDFOutput()
     for (int i = 0; i < (int)m_elements.size(); i++)
     {
       Element *element = m_elements[i];
+      elementCellWSE[i] = element->channelWSE;
+      elementChannelInflow[i] = element->channelInflow;
+      elementChannelHeatFlux[i] = element->channelHeatFlux;
 
       for(int j = 0; j < m_totalCellsPerElement; j++)
       {
         ElementCell *elementCell = element->elementCells[j];
 
         hydHead[j + i * m_totalCellsPerElement] = elementCell->hydHead.value;
+        satDepth[j + i * m_totalCellsPerElement] = elementCell->depth;
+        elementInflow[i] += elementCell->externalInflow;
+        elementCellInflow[j + i * m_totalCellsPerElement] = elementCell->externalInflow;
+        elementCellChannelInflow[j + i * m_totalCellsPerElement] = elementCell->channelInflow;
+        totalElementCellMassBal[j + i * m_totalCellsPerElement] = elementCell->totalMassBalance;
         temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
+        elementHeatFlux[i] += elementCell->externalHeatFluxes;
+        elementCellHeatFlux[j + i * m_totalCellsPerElement] = elementCell->externalHeatFluxes;
+        elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatFlux;
+
+        for(int k = 0; k < 4; k++)
+        {
+          edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
+          edgeSupVel[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeGradHydHead[k].value * elementCell->edgeHydCons[k] * dir[k];
+        }
+
+        double vy =  (elementCell->edgeGradHydHead[0].value * elementCell->edgeHydCons[0] * dir[0] +
+                     elementCell->edgeGradHydHead[2].value * elementCell->edgeHydCons[2] * dir[2]) / 2.0;
+
+        double vx =  (elementCell->edgeGradHydHead[1].value * elementCell->edgeHydCons[1] * dir[1] +
+                     elementCell->edgeGradHydHead[3].value * elementCell->edgeHydCons[3] * dir[3]) / 2.0;
+
+        cellSupVelX[j + i * m_totalCellsPerElement] = vx;
+        cellSupVelY[j + i * m_totalCellsPerElement] = vy;
 
         for (size_t k = 0; k < m_solutes.size(); k++)
         {
           solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
         }
       }
+
+      for (size_t k = 0; k < m_solutes.size(); k++)
+      {
+        channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteFlux[k];
+      }
     }
 
-//    size_t size = sizeof(float) * m_totalCellsPerElement;
+    //    size_t size = sizeof(float) * m_totalCellsPerElement;
     m_outNetCDFVariables["hydraulic_head"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), hydHead);
 
+    m_outNetCDFVariables["saturated_depth"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), satDepth);
+
+    m_outNetCDFVariables["element_external_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementInflow);
+
+    m_outNetCDFVariables["element_cell_external_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellInflow);
+
+    m_outNetCDFVariables["element_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflow);
+
+    m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflow);
+
+    m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), totalElementCellMassBal);
+
+    m_outNetCDFVariables["total_mass_balance"].putVar(std::vector<size_t>({currentTime}), std::vector<size_t>({1}), &m_totalMassBalance);
+
+    m_outNetCDFVariables["element_cell_face_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeFlow);
+
+    m_outNetCDFVariables["element_cell_face_sup_velocity"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeSupVel);
+
+    m_outNetCDFVariables["element_cell_sup_velocity_x"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelX);
+
+    m_outNetCDFVariables["element_cell_sup_velocity_y"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelY);
+
     m_outNetCDFVariables["temperature"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), temperature);
+
+    m_outNetCDFVariables["element_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementHeatFlux);
+
+    m_outNetCDFVariables["element_cell_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellHeatFlux);
+
+    m_outNetCDFVariables["element_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelHeatFlux);
+
+    m_outNetCDFVariables["element_cell_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelHeatFlux);
+
+    m_outNetCDFVariables["element_channel_wse"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementCellWSE);
 
     if(m_solutes.size())
     {
       m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_solutes.size(), m_elements.size(), (size_t)m_totalCellsPerElement}), solutes);
-    }
 
-    delete[] hydHead;
-    delete[] temperature;
-    delete[] solutes;
+      m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_solutes.size(), m_elements.size()}), channelSoluteFlux);
+    }
 
     if(m_flushToDisk)
     {
       m_outputNetCDF->sync();
     }
+
+
+    delete[] hydHead;
+    delete[] satDepth;
+    delete[] elementInflow;
+    delete[] elementCellInflow;
+    delete[] elementChannelInflow;
+    delete[] elementCellChannelInflow;
+    delete[] totalElementCellMassBal;
+    delete[] edgeFlow;
+    delete[] edgeSupVel;
+    delete[] cellSupVelX;
+    delete[] cellSupVelY;
+    delete[] temperature;
+    delete[] elementHeatFlux;
+    delete[] elementCellHeatFlux;
+    delete[] elementChannelHeatFlux;
+    delete[] elementCellChannelHeatFlux;
+    delete[] elementCellWSE;
+    delete[] solutes;
+    delete[] channelSoluteFlux;
   }
+
 #endif
 }
 
@@ -1862,6 +3275,7 @@ void GWModel::closeOutputNetCDFFile()
 
   if(m_outputNetCDF)
   {
+    m_outputNetCDF->sync();
     delete m_outputNetCDF;
     m_outputNetCDF = nullptr;
   }
@@ -1897,14 +3311,11 @@ const unordered_map<string, int> GWModel::m_inputFileFlags({
                                                              {"[ELEMENTS]", 5},
                                                              {"[ELEMENT_CELL_WIDTHS]", 6},
                                                              {"[INIT_HYDRAULICS]", 7},
-                                                             {"[BC_HYD_HEAD]", 8},
-                                                             {"[BC_HYD_HEAD_DERIV]", 9},
-                                                             {"[BC_FLUX]", 10},
-                                                             {"[BC_HEAD_DEPENDENT_FLUX]", 11},
-                                                             {"[TEMP_INIT]", 12},
-                                                             {"[BC_TEMP]", 13},
-                                                             {"[SOLUTE_INIT]", 14},
-                                                             {"[BC_SOLUTE]", 15},
+                                                             {"[INIT_CONDITIONS]", 8},
+                                                             {"[BOUNDARY_CONDITIONS]", 9},
+                                                             {"[TIMESERIES]", 10},
+                                                             {"[SOURCES]", 11},
+                                                             {"[CHANNEL_BOUNDARY_CONDITIONS]", 12}
                                                            });
 
 const unordered_map<std::string, int> GWModel::m_hydraulicVariableFlags({
@@ -1917,6 +3328,10 @@ const unordered_map<std::string, int> GWModel::m_hydraulicVariableFlags({
                                                                           {"POROSITY", 7},
                                                                           {"SED_DENSITY", 8},
                                                                           {"SED_SPECIFIC_HEAT_CAPACITY", 9},
+                                                                          {"DISPERSIVITY_X", 9},
+                                                                          {"DISPERSIVITY_Y", 10},
+                                                                          {"WATER_THERMAL_CONDUCTIVITY", 11},
+                                                                          {"SED_THERMAL_CONDUCTIVITY", 12},
                                                                         });
 
 const unordered_map<string, int> GWModel::m_optionsFlags({
@@ -1950,7 +3365,62 @@ const unordered_map<string, int> GWModel::m_optionsFlags({
                                                            {"FLUSH_TO_DISK_FREQ", 28},
                                                            {"PRINT_FREQ", 29},
                                                            {"DEFAULT_CELL_WIDTH", 30},
+                                                           {"DISPERSIVITY_X", 31},
+                                                           {"DISPERSIVITY_Y", 32},
+                                                           {"ADVECTION_MODE", 33},
+                                                           {"TVD_FLUX_LIMITER", 34},
+                                                           {"WATER_THERMAL_CONDUCTIVITY", 35},
+                                                           {"SED_THERMAL_CONDUCTIVITY", 36},
+                                                           {"DEFAULT_HYD_COND_Z", 37},
+                                                           {"HYD_HEAD_LINEAR_SOLVER", 38},
+                                                           {"TEMP_LINEAR_SOLVER", 39},
                                                          });
+
+const unordered_map<string, int> GWModel::m_advectionFlags({
+                                                             {"UPWIND", 1},
+                                                             {"CENTRAL", 2},
+                                                             {"HYBRID", 3},
+                                                             {"TVD", 4},
+                                                           });
+
+const unordered_map<string, int> GWModel::m_BCFlags({
+                                                      {"HYD_HEAD", 1},
+                                                      {"GRAD_HYD_HEAD", 2},
+                                                      {"TEMPERATURE", 3},
+                                                      {"GRAD_TEMPERATURE", 4},
+                                                      {"SOLUTE", 5},
+                                                      {"GRAD_SOLUTE", 6},
+                                                    });
+
+const unordered_map<string, int> GWModel::m_srcFlags({
+                                                       {"FLOW", 1},
+                                                       {"HEAT", 2},
+                                                       {"SOLUTE", 3},
+                                                     });
+
+const unordered_map<string, int> GWModel::m_geomMultFlags({
+                                                            {"NONE", 0},
+                                                            {"AREA", 1},
+                                                            {"VOLUME", 2},
+                                                            {"LENGTH", 3},
+                                                            {"WIDTH", 4},
+                                                            {"SATURATED_THICKNESS", 5},
+                                                          });
+
+const unordered_map<string, int> GWModel::m_chanVarFlags({
+                                                           {"WIDTH", 1},
+                                                           {"WSE", 2},
+                                                           {"TEMPERATURE", 3},
+                                                           {"SOLUTE", 4},
+                                                         });
+
+
+const unordered_map<string, int> GWModel::m_edgeFlags({
+                                                        {"RIGHT", 0},
+                                                        {"DOWN", 1},
+                                                        {"LEFT", 2},
+                                                        {"UP", 3}
+                                                      });
 
 const unordered_map<string, int> GWModel::m_solverTypeFlags({{"RK4", 1},
                                                              {"RKQS", 2},
@@ -1958,5 +3428,12 @@ const unordered_map<string, int> GWModel::m_solverTypeFlags({{"RK4", 1},
                                                              {"BDF", 4},
                                                              {"EULER", 5}
                                                             });
+
+const unordered_map<string, int> GWModel::m_linearSolverTypeFlags({{"GMRES", 1},
+                                                                   {"FGMRES", 2},
+                                                                   {"Bi_CGStab", 3},
+                                                                   {"TFQMR", 4},
+                                                                   {"PCG", 5}
+                                                                  });
 
 const QRegExp GWModel::m_dateTimeDelim("(\\,|\\t|\\\n|\\/|\\s+|\\:)");

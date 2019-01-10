@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HydroCoupleProject name="hydropeaking.hcp">
+    <ModelComponents>
+        <ModelComponent Name="Groundwater Model 1.0.0" Caption="Aquifer Response to Sinusoidal or Arbitrary Stage of Semipervious Stream" Description="Aquifer Response to Sinusoidal or Arbitrary Stage of Semipervious Stream" IsTrigger="True" ModelComponentLibrary="../../build/debug/libGWComponent.1.0.0.dylib" XPos="816" YPos="360">
+            <ComputeResourceAllocations>
+                <ComputeResourceAllocation MPI_Process="0" GPU_Platform="-1" GPU_Device="-1" Maximum_Number_GPU_Blocks_Or_Workgroups="0"/>
+            </ComputeResourceAllocations>
+            <Arguments>
+                <Argument Id="Identifiers" ArgumentIOType="String">
+                    <IdBasedArgument Id="Identifiers" Caption="Model Identifiers" IsOptional="False">
+                        <ValueDefinition Type="Quantity" ValueType="QString" MissingValue="-99999999" DefaultValue="0">
+                            <Unit ConversionFactorToSI="1" OffsetToSI="0"/>
+                        </ValueDefinition>
+                        <Dimensions>
+                            <Dimension Id="IdentifierDimension" Caption="Dimension for identifiers" Length="3"/>
+                        </Dimensions>
+                        <Values>
+                            <Value Id="Id">Ogata (1961) Example</Value>
+                            <Value Id="Caption">Advection dispersion plus adsorption</Value>
+                            <Value Id="Description">Advection dispersion plus adsorption</Value>
+                        </Values>
+                    </IdBasedArgument>
+                </Argument>
+                <Argument Id="FileIO" ArgumentIOType="String">
+                    <IdBasedArgument Id="FileIO" Caption="Model Input/Output Files" IsOptional="False">
+                        <ValueDefinition Type="Quantity" ValueType="QString" MissingValue="" DefaultValue="">
+                            <Unit ConversionFactorToSI="1" OffsetToSI="0"/>
+                        </ValueDefinition>
+                        <Dimensions>
+                            <Dimension Id="IdDimension" Caption="Dimension for identifiers" Length="2"/>
+                        </Dimensions>
+                        <Values>
+                            <Value Id="Input File">./ogata_banks.inp</Value>
+                            <Value Id="Output NetCDF File">./ogata_banks.nc</Value>
+                        </Values>
+                    </IdBasedArgument>
+                </Argument>
+            </Arguments>
+            <ExchangeItemPositions>
+                <Outputs/>
+                <Inputs/>
+            </ExchangeItemPositions>
+        </ModelComponent>
+    </ModelComponents>
+    <ModelComponentConnections/>
+</HydroCoupleProject>
