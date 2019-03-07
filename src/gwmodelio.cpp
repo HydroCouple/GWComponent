@@ -104,22 +104,29 @@ void GWModel::printStatus()
   if (m_currentPrintCount >= m_printFrequency)
   {
 
-    printf("GWModel TimeStep (s): %f\tDateTime: %f\tHead (m) { Iters: %i/%i\tMin: %f\tMax: %f\tTotalMassBalance: %g (m^3/s)}", m_timeStep, m_currentDateTime,
-           m_hydHeadSolver->getIterations(), m_hydHeadSolver->maxIterations(), m_minHead, m_maxHead, m_totalMassBalance);
+    printf("GWModel TimeStep (s): %f\tDateTime: %f\tIters: %i/%i\t Head (m) { Min: %f\tMax: %f\tTotalMassBalance: %g (m^3/s)}", m_timeStep, m_currentDateTime,
+           m_odeSolver->getIterations(), m_odeSolver->maxIterations(), m_minHead, m_maxHead, m_totalMassBalance);
 
     if(m_solveHeatTransport)
     {
-      printf("\tTemperature (°C) { Iters: %i/%i\tMin: %f\tMax: %f\tTotalMassBalance: %g (KJ)}",
-             m_heatSolver->getIterations(), m_heatSolver->maxIterations(), m_minTemp, m_maxTemp, m_totalHeatBalance);
+      printf("\tTemperature (°C) { Min: %f\tMax: %f\tTotalMassBalance: %g (KJ)}", m_minTemp, m_maxTemp, m_totalHeatBalance);
     }
 
 
     for (size_t j = 0; j < m_solutes.size(); j++)
     {
       std::string &solute = m_solutes[j];
-      ODESolver *solver = m_soluteSolvers[j];
-      printf("\t%s (kg/m) { Iters: %i/%i\tMin: %f\tMax: %f\tTotalMassBalance: %g (kg)}", solute.c_str(), solver->getIterations(), solver->maxIterations(),
-             m_minSolute[j], m_maxSolute[j], m_totalSoluteMassBalance[j]);
+
+      if(solute == "WATER_AGE")
+      {
+        printf("\t%s (days) { Min: %f\tMax: %f}", solute.c_str(),
+               m_minSolute[j], m_maxSolute[j]);
+      }
+      else
+      {
+        printf("\t%s (kg/m) { Min: %f\tMax: %f\tTotalMassBalance: %g (kg)}", solute.c_str(),
+               m_minSolute[j], m_maxSolute[j], m_totalSoluteMassBalance[j]);
+      }
     }
 
     printf("\n");
@@ -474,8 +481,16 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     hydHeadVar.putAtt("units", "m");
     m_outNetCDFVariables["hydraulic_head"] = hydHeadVar;
 
-    ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("saturated_depth", "float",
+
+    ThreadSafeNcVar dVolumeDtVar =  m_outputNetCDF->addVar("dvolume_dt", "float",
                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
+    dVolumeDtVar.putAtt("long_name", "Volume Time Derivative");
+    dVolumeDtVar.putAtt("units", "m");
+    m_outNetCDFVariables["dvolume_dt"] = dVolumeDtVar;
+
+
+    ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("saturated_depth", "float",
+                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
     satDepthVar.putAtt("long_name", "Saturated Depth");
     satDepthVar.putAtt("units", "m");
     m_outNetCDFVariables["saturated_depth"] = satDepthVar;
@@ -503,15 +518,28 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_inflow", "float",
                                                                       std::vector<std::string>({"time", "elements"}));
     elementChannelInflowVar.putAtt("long_name", "Element Channel Inflow");
-    elementChannelInflowVar.putAtt("units", "m^3");
+    elementChannelInflowVar.putAtt("units", "m^3/s");
     m_outNetCDFVariables["element_channel_inflow"] = elementChannelInflowVar;
+
+    ThreadSafeNcVar elementChannelInflowFluxVar =  m_outputNetCDF->addVar("element_channel_inflow_flux", "float",
+                                                                          std::vector<std::string>({"time", "elements"}));
+    elementChannelInflowFluxVar.putAtt("long_name", "Element Channel Inflow Flux");
+    elementChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
+    m_outNetCDFVariables["element_channel_inflow_flux"] = elementChannelInflowFluxVar;
 
 
     ThreadSafeNcVar elementCellChannelInflowVar =  m_outputNetCDF->addVar("element_cell_channel_inflow", "float",
                                                                           std::vector<std::string>({"time", "elements","element_cells"}));
     elementCellChannelInflowVar.putAtt("long_name", "Element Cell Channel Inflow");
-    elementCellChannelInflowVar.putAtt("units", "m^3");
+    elementCellChannelInflowVar.putAtt("units", "m^3/s");
     m_outNetCDFVariables["element_cell_channel_inflow"] = elementCellChannelInflowVar;
+
+
+    ThreadSafeNcVar elementCellChannelInflowFluxVar =  m_outputNetCDF->addVar("element_cell_channel_inflow_flux", "float",
+                                                                              std::vector<std::string>({"time", "elements","element_cells"}));
+    elementCellChannelInflowFluxVar.putAtt("long_name", "Element Cell Channel Inflow Flux");
+    elementCellChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
+    m_outNetCDFVariables["element_cell_channel_inflow_flux"] = elementCellChannelInflowFluxVar;
 
 
     ThreadSafeNcVar elementCellFaceFlowVar =  m_outputNetCDF->addVar("element_cell_face_flow", "float",
@@ -554,6 +582,12 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     tempVar.putAtt("units", "°C");
     m_outNetCDFVariables["temperature"] = tempVar;
 
+    ThreadSafeNcVar waterAgeVar =  m_outputNetCDF->addVar("water_age", "float",
+                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
+    waterAgeVar.putAtt("long_name", "Water Age");
+    waterAgeVar.putAtt("units", "days");
+    m_outNetCDFVariables["water_age"] = waterAgeVar;
+
 
     ThreadSafeNcVar elementExternalHeatFluxVar =  m_outputNetCDF->addVar("element_external_heat_flux", "float",
                                                                          std::vector<std::string>({"time", "elements"}));
@@ -590,6 +624,13 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     m_outNetCDFVariables["element_channel_wse"] = elementChannelWSEVar;
 
 
+    ThreadSafeNcVar elementChannelFlowWidthVar =  m_outputNetCDF->addVar("element_channel_flow_top_width", "float",
+                                                                         std::vector<std::string>({"time", "elements"}));
+    elementChannelFlowWidthVar.putAtt("long_name", "Element Channel Flow Top Width");
+    elementChannelFlowWidthVar.putAtt("units", "m");
+    m_outNetCDFVariables["element_channel_flow_top_width"] = elementChannelFlowWidthVar;
+
+
     ThreadSafeNcVar solutesVar =  m_outputNetCDF->addVar("solute_concentration", "float",
                                                          std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
     solutesVar.putAtt("long_name", "Solute Concentration");
@@ -597,7 +638,7 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     m_outNetCDFVariables["solute_concentration"] = solutesVar;
 
     ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
-                                                         std::vector<std::string>({"time", "solutes", "elements"}));
+                                                                          std::vector<std::string>({"time", "solutes", "elements"}));
     elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
     elementChannelSoluteFluxVar.putAtt("units", "kg/s");
     m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
@@ -824,34 +865,34 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             std::string code = options[1].toUpper().toStdString();
             auto it = m_solverTypeFlags.find(code);
 
-            int heatSolverMode = -1;
+            int solverMode = -1;
 
             if (it != m_solverTypeFlags.end())
-              heatSolverMode = it->second;
+              solverMode = it->second;
 
-            switch (heatSolverMode)
+            switch (solverMode)
             {
               case 1:
-                m_hydHeadSolver->setSolverType(ODESolver::RK4);
+                m_odeSolver->setSolverType(ODESolver::RK4);
                 break;
               case 2:
-                m_hydHeadSolver->setSolverType(ODESolver::RKQS);
+                m_odeSolver->setSolverType(ODESolver::RKQS);
                 break;
               case 3:
                 {
-                  m_hydHeadSolver->setSolverType(ODESolver::CVODE_ADAMS);
-                  m_hydHeadSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
+                  m_odeSolver->setSolverType(ODESolver::CVODE_ADAMS);
+                  m_odeSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
                 }
                 break;
               case 4:
                 {
-                  m_hydHeadSolver->setSolverType(ODESolver::CVODE_BDF);
-                  m_hydHeadSolver->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
-                  m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                  m_odeSolver->setSolverType(ODESolver::CVODE_BDF);
+                  m_odeSolver->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
+                  m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
                 }
                 break;
               case 5:
-                m_hydHeadSolver->setSolverType(ODESolver::EULER);
+                m_odeSolver->setSolverType(ODESolver::EULER);
                 break;
               default:
                 foundError = true;
@@ -881,7 +922,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             double abs_tol = options[1].toDouble(&ok);
 
             if (ok)
-              m_hydHeadSolver->setAbsoluteTolerance(abs_tol);
+              m_odeSolver->setAbsoluteTolerance(abs_tol);
 
             foundError = !ok;
           }
@@ -908,7 +949,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             double rel_tol = options[1].toDouble(&ok);
 
             if (ok)
-              m_hydHeadSolver->setRelativeTolerance(rel_tol);
+              m_odeSolver->setRelativeTolerance(rel_tol);
 
             foundError = !ok;
           }
@@ -950,115 +991,6 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
 
           if (options.size() == 2)
           {
-            std::string code = options[1].toUpper().toStdString();
-            auto it = m_solverTypeFlags.find(code);
-
-            int heatSolverMode = -1;
-
-            if (it != m_solverTypeFlags.end())
-              heatSolverMode = it->second;
-
-            switch (heatSolverMode)
-            {
-              case 1:
-                m_heatSolver->setSolverType(ODESolver::RK4);
-                break;
-              case 2:
-                m_heatSolver->setSolverType(ODESolver::RKQS);
-                break;
-              case 3:
-                {
-                  m_heatSolver->setSolverType(ODESolver::CVODE_ADAMS);
-                  m_heatSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
-                }
-                break;
-              case 4:
-                {
-                  m_heatSolver->setSolverType(ODESolver::CVODE_BDF);
-                  m_heatSolver->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
-                  m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
-                }
-                break;
-              case 5:
-                m_heatSolver->setSolverType(ODESolver::EULER);
-                break;
-              default:
-                foundError = true;
-                break;
-            }
-          }
-          else
-          {
-            foundError = true;
-          }
-
-          if (foundError)
-          {
-            errorMessage = "Temeprature solver type error";
-            return false;
-          }
-        }
-        break;
-      case 14:
-        {
-          bool foundError = false;
-
-          if (options.size() == 2)
-          {
-
-            bool ok;
-            double abs_tol = options[1].toDouble(&ok);
-
-            if (ok)
-              m_heatSolver->setAbsoluteTolerance(abs_tol);
-
-            foundError = !ok;
-          }
-          else
-          {
-            foundError = true;
-          }
-
-          if (foundError)
-          {
-            errorMessage = "Heat solver absolute tolerance error";
-            return false;
-          }
-        }
-        break;
-      case 15:
-        {
-          bool foundError = false;
-
-          if (options.size() == 2)
-          {
-
-            bool ok;
-            double rel_tol = options[1].toDouble(&ok);
-
-            if (ok)
-              m_heatSolver->setRelativeTolerance(rel_tol);
-
-            foundError = !ok;
-          }
-          else
-          {
-            foundError = true;
-          }
-
-          if (foundError)
-          {
-            errorMessage = "Heat solver relative tolerance error";
-            return false;
-          }
-        }
-        break;
-      case 16:
-        {
-          bool foundError = false;
-
-          if (options.size() == 2)
-          {
             bool ok;
             m_waterDensity = options[1].toDouble(&ok);
             foundError = !ok;
@@ -1075,7 +1007,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 17:
+      case 14:
         {
           bool foundError = false;
 
@@ -1097,7 +1029,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 18:
+      case 15:
         {
           bool foundError = false;
 
@@ -1119,7 +1051,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 19:
+      case 16:
         {
           bool foundError = false;
 
@@ -1141,7 +1073,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 20:
+      case 17:
         {
           bool foundError = false;
 
@@ -1163,7 +1095,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 21:
+      case 18:
         {
           bool foundError = false;
 
@@ -1185,7 +1117,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 22:
+      case 19:
         {
           bool foundError = false;
 
@@ -1207,7 +1139,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 23:
+      case 20:
         {
           bool foundError = false;
 
@@ -1229,7 +1161,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 24:
+      case 21:
         {
           bool foundError = false;
 
@@ -1253,7 +1185,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 25:
+      case 22:
         {
           bool foundError = false;
 
@@ -1277,7 +1209,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 26:
+      case 23:
         {
           bool foundError = false;
 
@@ -1303,7 +1235,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 27:
+      case 24:
         {
           bool foundError = false;
 
@@ -1323,7 +1255,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 28:
+      case 25:
         {
           bool foundError = false;
 
@@ -1345,7 +1277,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 29:
+      case 26:
         {
           bool foundError = false;
 
@@ -1367,7 +1299,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 30:
+      case 27:
         {
           bool foundError = false;
 
@@ -1389,7 +1321,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 31:
+      case 28:
         {
           bool foundError = false;
 
@@ -1413,7 +1345,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 32:
+      case 29:
         {
           bool foundError = false;
 
@@ -1437,7 +1369,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 33:
+      case 30:
         {
           bool foundError = false;
 
@@ -1482,7 +1414,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 34:
+      case 31:
         {
           bool foundError = false;
 
@@ -1506,7 +1438,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 35:
+      case 32:
         {
           bool foundError = false;
 
@@ -1530,7 +1462,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 36:
+      case 33:
         {
           bool foundError = false;
 
@@ -1554,7 +1486,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 37:
+      case 34:
         {
           bool foundError = false;
 
@@ -1578,7 +1510,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
-      case 38:
+      case 35:
         {
           bool foundError = false;
 
@@ -1595,19 +1527,19 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             switch (linearSolver)
             {
               case 1:
-                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
+                m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
                 break;
               case 2:
-                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::FGMRES);
+                m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::FGMRES);
                 break;
               case 3:
-                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::Bi_CGStab);
+                m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::Bi_CGStab);
                 break;
               case 4:
-                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::TFQMR);
+                m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::TFQMR);
                 break;
               case 5:
-                m_hydHeadSolver->setLinearSolverType(ODESolver::LinearSolverType::PCG);
+                m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::PCG);
                 break;
               default:
                 foundError = true;
@@ -1621,46 +1553,21 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
 
           if (foundError)
           {
-            errorMessage = "Hydraulic head  linear solver type error";
+            errorMessage = "Linear solver type error";
             return false;
           }
         }
         break;
-      case 39:
+      case 36:
         {
           bool foundError = false;
 
           if (options.size() == 2)
           {
-            std::string code = options[1].toUpper().toStdString();
-            auto it = m_linearSolverTypeFlags.find(code);
+            m_simulateWaterAge = QString::compare(options[1], "No", Qt::CaseInsensitive);
 
-            int linearSolver = -1;
-
-            if (it != m_linearSolverTypeFlags.end())
-              linearSolver = it->second;
-
-            switch (linearSolver)
-            {
-              case 1:
-                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
-                break;
-              case 2:
-                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::FGMRES);
-                break;
-              case 3:
-                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::Bi_CGStab);
-                break;
-              case 4:
-                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::TFQMR);
-                break;
-              case 5:
-                m_heatSolver->setLinearSolverType(ODESolver::LinearSolverType::PCG);
-                break;
-              default:
-                foundError = true;
-                break;
-            }
+            if(m_simulateWaterAge)
+              setNumSolutes(m_numSolutes);
           }
           else
           {
@@ -1669,7 +1576,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
 
           if (foundError)
           {
-            errorMessage = "Hydraulic heat  linear solver type error";
+            errorMessage = "Simulate water age error";
             return false;
           }
         }
@@ -1705,7 +1612,7 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
 {
   QStringList columns = line.split(m_delimiters, QString::SkipEmptyParts);
 
-  if (columns.size() == 7)
+  if (columns.size() >= 4)
   {
     bool foundError = false;
 
@@ -1713,116 +1620,46 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
     {
       m_solutes[m_addedSoluteCount] = columns[0].toStdString();
 
-      std::string solverType = columns[4].toStdString();
-      auto it = m_solverTypeFlags.find(solverType);
+      bool parsed;
 
-      if (it != m_solverTypeFlags.end())
+      double first_order_k = columns[1].toDouble(&parsed);
+
+      if(parsed)
       {
-        int solverTypeCode = it->second;
-
-        switch (solverTypeCode)
-        {
-          case 1:
-            m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::RK4);
-            break;
-          case 2:
-            m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::RKQS);
-            break;
-          case 3:
-            {
-              m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_ADAMS);
-              m_soluteSolvers[m_addedSoluteCount]->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
-            }
-            break;
-          case 4:
-            {
-              m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::CVODE_BDF);
-              m_soluteSolvers[m_addedSoluteCount]->setSolverIterationMethod(ODESolver::IterationMethod::NEWTON);
-              m_soluteSolvers[m_addedSoluteCount]->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
-            }
-            break;
-          case 5:
-            m_soluteSolvers[m_addedSoluteCount]->setSolverType(ODESolver::EULER);
-            break;
-          default:
-            foundError = true;
-            break;
-        }
-
-        if (foundError)
-        {
-          errorMessage = "Solute error";
-          return false;
-        }
-
-        bool parsed;
-
-        double first_order_k = columns[1].toDouble(&parsed);
-
-        if(parsed)
-        {
-          m_solute_first_order_k[m_addedSoluteCount] = first_order_k;
-        }
-        else
-        {
-          errorMessage = "Invalid solute first order reaction rate";
-          return false;
-        }
-
-
-        double kd = columns[2].toDouble(&parsed);
-
-        if(parsed)
-        {
-          m_solute_kd[m_addedSoluteCount] = kd;
-        }
-        else
-        {
-          errorMessage = "Invalid solute first order reaction rate";
-          return false;
-        }
-
-        double molDiff = columns[3].toDouble(&parsed);
-
-        if(parsed)
-        {
-          m_solute_molecular_diff[m_addedSoluteCount] = molDiff;
-        }
-        else
-        {
-          errorMessage = "Invalid solute molecular diffision";
-          return false;
-        }
-
-        double abs_tol = columns[5].toDouble(&parsed);
-
-        if (parsed)
-        {
-          m_soluteSolvers[m_addedSoluteCount]->setAbsoluteTolerance(abs_tol);
-        }
-        else
-        {
-          errorMessage = "Solute absolute tolerance error";
-          return false;
-        }
-
-        double rel_tol = columns[6].toDouble(&parsed);
-
-        if (parsed)
-        {
-          m_soluteSolvers[m_addedSoluteCount]->setRelativeTolerance(rel_tol);
-        }
-        else
-        {
-          errorMessage = "Solute relative tolerance error";
-          return false;
-        }
+        m_solute_first_order_k[m_addedSoluteCount] = first_order_k;
       }
       else
       {
-        errorMessage = "Solute error";
+        errorMessage = "Invalid solute first order reaction rate";
         return false;
       }
+
+
+      double kd = columns[2].toDouble(&parsed);
+
+      if(parsed)
+      {
+        m_solute_kd[m_addedSoluteCount] = kd;
+      }
+      else
+      {
+        errorMessage = "Invalid solute first order reaction rate";
+        return false;
+      }
+
+      double molDiff = columns[3].toDouble(&parsed);
+
+      if(parsed)
+      {
+        m_solute_molecular_diff[m_addedSoluteCount] = molDiff;
+      }
+      else
+      {
+        errorMessage = "Invalid solute molecular diffision";
+        return false;
+      }
+
+
 
       m_addedSoluteCount++;
     }
@@ -3118,24 +2955,29 @@ void GWModel::writeNetCDFOutput()
     m_outNetCDFVariables["time"].putVar(std::vector<size_t>({currentTime}), m_currentDateTime);
 
     float *hydHead = new float[m_elements.size() * m_totalCellsPerElement];
+    float *dvolumedt = new float[m_elements.size() * m_totalCellsPerElement];
     float *satDepth = new float[m_elements.size() * m_totalCellsPerElement];
     float *elementInflow = new float[m_elements.size()]();
     float *elementCellInflow = new float[m_elements.size() * m_totalCellsPerElement];
     float *elementChannelInflow = new float[m_elements.size()]();
+    float *elementChannelInflowFlux = new float[m_elements.size()]();
     float *elementCellChannelInflow = new float[m_elements.size() * m_totalCellsPerElement];
+    float *elementCellChannelInflowFlux = new float[m_elements.size() * m_totalCellsPerElement];
     float *totalElementCellMassBal = new float[m_elements.size() * m_totalCellsPerElement];
     float *edgeFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
     float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
     float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
     float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
     float *temperature = new float[m_elements.size() * m_totalCellsPerElement];
+    float *waterAge = new float[m_elements.size() * m_totalCellsPerElement];
     float *elementHeatFlux = new float[m_elements.size()];
     float *elementCellHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
     float *elementChannelHeatFlux = new float[m_elements.size()]();
     float *elementCellChannelHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementCellWSE = new float[m_elements.size()];
-    float *solutes = new float[m_elements.size() * m_solutes.size() * m_totalCellsPerElement];
-    float *channelSoluteFlux = new float[m_elements.size() * m_solutes.size()];
+    float *elementChannelWSE = new float[m_elements.size()];
+    float *elementChannelWidth = new float[m_elements.size()];
+    float *solutes = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement];
+    float *channelSoluteFlux = new float[m_elements.size() * m_numSolutes];
 
 
 #ifdef USE_OPENMP
@@ -3144,8 +2986,10 @@ void GWModel::writeNetCDFOutput()
     for (int i = 0; i < (int)m_elements.size(); i++)
     {
       Element *element = m_elements[i];
-      elementCellWSE[i] = element->channelWSE;
+      elementChannelWSE[i] = element->channelWSE;
+      elementChannelWidth[i] = element->channelWidth;
       elementChannelInflow[i] = element->channelInflow;
+      elementChannelInflowFlux[i] = element->channelInflowFlux;
       elementChannelHeatFlux[i] = element->channelHeatFlux;
 
       for(int j = 0; j < m_totalCellsPerElement; j++)
@@ -3153,10 +2997,12 @@ void GWModel::writeNetCDFOutput()
         ElementCell *elementCell = element->elementCells[j];
 
         hydHead[j + i * m_totalCellsPerElement] = elementCell->hydHead.value;
+        dvolumedt[j + i * m_totalCellsPerElement] = elementCell->dvolume_dt;
         satDepth[j + i * m_totalCellsPerElement] = elementCell->depth;
         elementInflow[i] += elementCell->externalInflow;
         elementCellInflow[j + i * m_totalCellsPerElement] = elementCell->externalInflow;
         elementCellChannelInflow[j + i * m_totalCellsPerElement] = elementCell->channelInflow;
+        elementCellChannelInflowFlux[j + i * m_totalCellsPerElement] = elementCell->channelInflowFlux;
         totalElementCellMassBal[j + i * m_totalCellsPerElement] = elementCell->totalMassBalance;
         temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
         elementHeatFlux[i] += elementCell->externalHeatFluxes;
@@ -3178,13 +3024,13 @@ void GWModel::writeNetCDFOutput()
         cellSupVelX[j + i * m_totalCellsPerElement] = vx;
         cellSupVelY[j + i * m_totalCellsPerElement] = vy;
 
-        for (size_t k = 0; k < m_solutes.size(); k++)
+        for (int k = 0; k < m_numSolutes; k++)
         {
           solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
         }
       }
 
-      for (size_t k = 0; k < m_solutes.size(); k++)
+      for (int k = 0; k < m_numSolutes; k++)
       {
         channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteFlux[k];
       }
@@ -3192,6 +3038,8 @@ void GWModel::writeNetCDFOutput()
 
     //    size_t size = sizeof(float) * m_totalCellsPerElement;
     m_outNetCDFVariables["hydraulic_head"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), hydHead);
+
+    m_outNetCDFVariables["dvolume_dt"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), dvolumedt);
 
     m_outNetCDFVariables["saturated_depth"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), satDepth);
 
@@ -3201,7 +3049,11 @@ void GWModel::writeNetCDFOutput()
 
     m_outNetCDFVariables["element_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflow);
 
+    m_outNetCDFVariables["element_channel_inflow_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflowFlux);
+
     m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflow);
+
+    m_outNetCDFVariables["element_cell_channel_inflow_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflowFlux);
 
     m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), totalElementCellMassBal);
 
@@ -3225,13 +3077,36 @@ void GWModel::writeNetCDFOutput()
 
     m_outNetCDFVariables["element_cell_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelHeatFlux);
 
-    m_outNetCDFVariables["element_channel_wse"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementCellWSE);
+    m_outNetCDFVariables["element_channel_wse"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWSE);
 
-    if(m_solutes.size())
+    m_outNetCDFVariables["element_channel_flow_top_width"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWidth);
+
+
+    if(m_numSolutes)
     {
-      m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_solutes.size(), m_elements.size(), (size_t)m_totalCellsPerElement}), solutes);
+      m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement}), solutes);
 
-      m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_solutes.size(), m_elements.size()}), channelSoluteFlux);
+      m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size()}), channelSoluteFlux);
+    }
+
+    if(m_simulateWaterAge)
+    {
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for (int i = 0; i < (int)m_elements.size(); i++)
+      {
+        Element *element = m_elements[i];
+
+        for(int j = 0; j < m_totalCellsPerElement; j++)
+        {
+          ElementCell *elementCell = element->elementCells[j];
+          waterAge[j + i * m_totalCellsPerElement] = elementCell->soluteConcs[m_numSolutes].value;
+        }
+      }
+
+      m_outNetCDFVariables["water_age"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), waterAge);
     }
 
     if(m_flushToDisk)
@@ -3241,22 +3116,27 @@ void GWModel::writeNetCDFOutput()
 
 
     delete[] hydHead;
+    delete[] dvolumedt;
     delete[] satDepth;
     delete[] elementInflow;
     delete[] elementCellInflow;
     delete[] elementChannelInflow;
+    delete[] elementChannelInflowFlux;
     delete[] elementCellChannelInflow;
+    delete[] elementCellChannelInflowFlux;
     delete[] totalElementCellMassBal;
     delete[] edgeFlow;
     delete[] edgeSupVel;
     delete[] cellSupVelX;
     delete[] cellSupVelY;
     delete[] temperature;
+    delete[] waterAge;
     delete[] elementHeatFlux;
     delete[] elementCellHeatFlux;
     delete[] elementChannelHeatFlux;
     delete[] elementCellChannelHeatFlux;
-    delete[] elementCellWSE;
+    delete[] elementChannelWSE;
+    delete[] elementChannelWidth;
     delete[] solutes;
     delete[] channelSoluteFlux;
   }
@@ -3343,37 +3223,34 @@ const unordered_map<string, int> GWModel::m_optionsFlags({
                                                            {"NUM_INITIAL_FIXED_STEPS", 6},
                                                            {"USE_ADAPTIVE_TIME_STEP", 7},
                                                            {"TIME_STEP_RELAXATION_FACTOR", 8},
-                                                           {"HYD_HEAD_SOLVER", 9},
-                                                           {"HYD_HEAD_SOLVER_ABS_TOL", 10},
-                                                           {"HYD_HEAD_SOLVER_REL_TOL", 11},
+                                                           {"SOLVER", 9},
+                                                           {"SOLVER_ABS_TOL", 10},
+                                                           {"SOLVER_REL_TOL", 11},
                                                            {"SOLVE_TEMP", 12},
-                                                           {"TEMP_SOLVER", 13},
-                                                           {"TEMP_SOLVER_ABS_TOL", 14},
-                                                           {"TEMP_SOLVER_REL_TOL", 15},
-                                                           {"WATER_DENSITY", 16},
-                                                           {"WATER_SPECIFIC_HEAT_CAPACITY", 17},
-                                                           {"DEFAULT_SED_DENSITY", 18},
-                                                           {"DEFAULT_SED_SPECIFIC_HEAT_CAPACITY", 19},
-                                                           {"DEFAULT_POROSITY", 20},
-                                                           {"DEFAULT_HYD_COND_X", 21},
-                                                           {"DEFAULT_HYD_COND_Y", 22},
-                                                           {"DEFAULT_SPECIFIC_STORAGE", 23},
-                                                           {"NUM_LEFT_CELLS", 24},
-                                                           {"NUM_RIGHT_CELLS", 25},
-                                                           {"NUM_SOLUTES", 26},
-                                                           {"VERBOSE", 27},
-                                                           {"FLUSH_TO_DISK_FREQ", 28},
-                                                           {"PRINT_FREQ", 29},
-                                                           {"DEFAULT_CELL_WIDTH", 30},
-                                                           {"DISPERSIVITY_X", 31},
-                                                           {"DISPERSIVITY_Y", 32},
-                                                           {"ADVECTION_MODE", 33},
-                                                           {"TVD_FLUX_LIMITER", 34},
-                                                           {"WATER_THERMAL_CONDUCTIVITY", 35},
-                                                           {"SED_THERMAL_CONDUCTIVITY", 36},
-                                                           {"DEFAULT_HYD_COND_Z", 37},
-                                                           {"HYD_HEAD_LINEAR_SOLVER", 38},
-                                                           {"TEMP_LINEAR_SOLVER", 39},
+                                                           {"WATER_DENSITY", 13},
+                                                           {"WATER_SPECIFIC_HEAT_CAPACITY", 14},
+                                                           {"DEFAULT_SED_DENSITY", 15},
+                                                           {"DEFAULT_SED_SPECIFIC_HEAT_CAPACITY", 16},
+                                                           {"DEFAULT_POROSITY", 17},
+                                                           {"DEFAULT_HYD_COND_X", 18},
+                                                           {"DEFAULT_HYD_COND_Y", 19},
+                                                           {"DEFAULT_SPECIFIC_STORAGE", 20},
+                                                           {"NUM_LEFT_CELLS", 21},
+                                                           {"NUM_RIGHT_CELLS", 22},
+                                                           {"NUM_SOLUTES", 23},
+                                                           {"VERBOSE", 24},
+                                                           {"FLUSH_TO_DISK_FREQ", 25},
+                                                           {"PRINT_FREQ", 26},
+                                                           {"DEFAULT_CELL_WIDTH", 27},
+                                                           {"DISPERSIVITY_X", 28},
+                                                           {"DISPERSIVITY_Y", 29},
+                                                           {"ADVECTION_MODE", 30},
+                                                           {"TVD_FLUX_LIMITER", 31},
+                                                           {"WATER_THERMAL_CONDUCTIVITY", 32},
+                                                           {"SED_THERMAL_CONDUCTIVITY", 33},
+                                                           {"DEFAULT_HYD_COND_Z", 34},
+                                                           {"LINEAR_SOLVER", 35},
+                                                           {"SIMULATE_WATER_AGE", 36},
                                                          });
 
 const unordered_map<string, int> GWModel::m_advectionFlags({

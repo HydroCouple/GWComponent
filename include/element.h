@@ -83,6 +83,11 @@ struct ElementCell
     double channelInflow;
 
     /*!
+     * \brief channelInflowFlux
+     */
+    double channelInflowFlux;
+
+    /*!
      * \brief totalMassBalance
      */
     double totalMassBalance;
@@ -243,6 +248,11 @@ struct ElementCell
     double depth;
 
     /*!
+     * \brief satDepth
+     */
+    double satDepth;
+
+    /*!
      * \brief edgeHydCons
      */
     double *edgeHydCons;
@@ -293,6 +303,16 @@ struct ElementCell
     double dvolume_dt;
 
     /*!
+     * \brief qX
+     */
+    double qX;
+
+    /*!
+     * \brief qY
+     */
+    double qY;
+
+    /*!
      * \brief start
      */
     bool start;
@@ -301,6 +321,9 @@ struct ElementCell
      * \brief parentElement
      */
     Element *parentElement;
+
+    ElementCell **neighbors;
+
 
     /*!
      * \brief initialize
@@ -480,6 +503,11 @@ struct ElementCell
      */
     void computeEdgeDepths();
 
+    /*!
+     * \brief computeVolumeDerivative
+     */
+    void computeVolumeDerivative();
+
   private:
 
     /*!
@@ -518,34 +546,34 @@ struct ElementCell
     void computeChannelHeatFlux();
 
     /*!
-     * \brief computeChannelSoluteFlux
-     * \param dt
-     * \param S
-     * \param soluteIndex
-     */
+         * \brief computeChannelSoluteFlux
+         * \param dt
+         * \param S
+         * \param soluteIndex
+         */
     void computeChannelSoluteFlux(int soluteIndex);
 
-    /*!
-     * \brief computeChannelMassFlux
-     * \param dt
-     * \param T
-     */
-    void computeChannelMassFlux(double dt, double H[]);
+    //    /*!
+    //     * \brief computeChannelMassFlux
+    //     * \param dt
+    //     * \param T
+    //     */
+    //    void computeChannelMassFlux(double dt, double H[]);
 
-    /*!
-     * \brief computeChannelHeatFlux
-     * \param dt
-     * \param T
-     */
-    void computeChannelHeatFlux(double dt, double T[]);
+    //    /*!
+    //     * \brief computeChannelHeatFlux
+    //     * \param dt
+    //     * \param T
+    //     */
+    //    void computeChannelHeatFlux(double dt, double T[]);
 
-    /*!
-     * \brief computeChannelSoluteFlux
-     * \param dt
-     * \param S
-     * \param soluteIndex
-     */
-    void computeChannelSoluteFlux(double dt, double S[], int soluteIndex);
+    //    /*!
+    //     * \brief computeChannelSoluteFlux
+    //     * \param dt
+    //     * \param S
+    //     * \param soluteIndex
+    //     */
+    //    void computeChannelSoluteFlux(double dt, double S[], int soluteIndex);
 
     /*!
      * \brief computeHydHeadEdgeHeadBC
@@ -684,7 +712,6 @@ struct ElementCell
   private:
 
 
-    ElementCell **neighbors;
 
     double rhom_Cm;
 
@@ -701,6 +728,7 @@ struct ElementCell
     const static double ef2[];
 
     double *retardationFactor;
+
 };
 
 /*!
@@ -812,6 +840,11 @@ struct GWCOMPONENT_EXPORT Element
     * \brief channelInflow
     */
    double channelInflow;
+
+   /*!
+    * \brief channelInflowFlux
+    */
+   double channelInflowFlux;
 
    /*!
     * \brief channelHeatFlux

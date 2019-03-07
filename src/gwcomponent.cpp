@@ -344,6 +344,8 @@ void GWComponent::createInputs()
   {
     createChannelSoluteInput(i);
   }
+
+  createWaterAgeFluxInput();
 }
 
 void GWComponent::createChannelWSEInput()
@@ -444,11 +446,11 @@ void GWComponent::createChannelSoluteInput(int soluteIndex)
   QString soluteName = QString::fromStdString(m_modelInstance->solute(soluteIndex));
 
   ElementInput *channelSoluteInput = new ElementInput("Channel" + soluteName + "Input",
-                                                     m_timeDimension,
-                                                     m_geometryDimension,
-                                                     m_soluteConcQuantity,
-                                                     ElementInput::ChannelSolute,
-                                                     this);
+                                                      m_timeDimension,
+                                                      m_geometryDimension,
+                                                      m_soluteConcQuantity,
+                                                      ElementInput::ChannelSolute,
+                                                      this);
 
   channelSoluteInput->setCaption("Channel " + soluteName + " Concentration (kg/m^3)");
   channelSoluteInput->setSoluteIndex(soluteIndex);
@@ -472,6 +474,41 @@ void GWComponent::createChannelSoluteInput(int soluteIndex)
   addInput(channelSoluteInput);
 }
 
+void GWComponent::createWaterAgeFluxInput()
+{
+  if(m_modelInstance->simulateWaterAge())
+  {
+    Quantity *timeQuantity = Quantity::unitLessValues("Time/Time", QVariant::Double, this);
+
+    ElementInput *soluteFluxInput  = new ElementInput("WaterAgeFluxInput",
+                                                      m_timeDimension,
+                                                      m_geometryDimension,
+                                                      timeQuantity,
+                                                      ElementInput::ChannelSolute,
+                                                      this);
+
+    soluteFluxInput->setCaption("Element Water Age (days)");
+    soluteFluxInput->setSoluteIndex(m_modelInstance->numSolutes());
+
+    QList<QSharedPointer<HCGeometry>> geometries;
+
+    for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+    {
+      geometries.append(lineString);
+    }
+
+    soluteFluxInput->addGeometries(geometries);
+
+    SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime() - 1.0/1000000.0, soluteFluxInput);
+    SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), soluteFluxInput);
+
+    soluteFluxInput->addTime(dt1);
+    soluteFluxInput->addTime(dt2);
+
+    addInput(soluteFluxInput);
+  }
+}
+
 void GWComponent::createOutputs()
 {
   createChannelOutflowOutput();
@@ -482,6 +519,8 @@ void GWComponent::createOutputs()
   {
     createChannelOutflowSoluteFluxOutput(i);
   }
+
+  createWaterAgeFluxOutput();
 }
 
 void GWComponent::createChannelOutflowOutput()
@@ -578,4 +617,37 @@ void GWComponent::createChannelOutflowSoluteFluxOutput(int soluteIndex)
 
   m_channelOutflowSoluteOutputs.push_back(channelOutflowSoluteOutput);
   addOutput(channelOutflowSoluteOutput);
+}
+
+void GWComponent::createWaterAgeFluxOutput()
+{
+  if(m_modelInstance->simulateWaterAge())
+  {
+    Quantity *timeQuantity = Quantity::timeInDays(this);
+    ElementOutput *soluteOutput  = new ElementOutput("WaterAgeOutput",
+                                                     m_timeDimension,
+                                                     m_geometryDimension,
+                                                     timeQuantity ,
+                                                     ElementOutput::ChannelOutflowSoluteFlux,
+                                                     this);
+    soluteOutput->setCaption("Element Water Age Flux (days/s)");
+    soluteOutput->setSoluteIndex(m_modelInstance->numSolutes());
+
+    QList<QSharedPointer<HCGeometry>> geometries;
+
+    for(const QSharedPointer<HCGeometry> &lineString : m_elementGeometries)
+    {
+      geometries.append(lineString);
+    }
+
+    soluteOutput->addGeometries(geometries);
+
+    SDKTemporal::DateTime *dt1 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime() - 1.0/1000000.0, soluteOutput);
+    SDKTemporal::DateTime *dt2 = new SDKTemporal::DateTime(m_modelInstance->currentDateTime(), soluteOutput);
+
+    soluteOutput->addTime(dt1);
+    soluteOutput->addTime(dt2);
+
+    addOutput(soluteOutput);
+  }
 }

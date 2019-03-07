@@ -34,6 +34,7 @@
 
 class ThreadSafeNcFile;
 struct Element;
+struct ElementCell;
 struct ElementJunction;
 class IBoundaryCondition;
 class TimeSeries;
@@ -196,19 +197,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \brief hydHeadSolver
      * \return
      */
-    ODESolver *hydHeadSolver() const ;
-
-    /*!
-     * \brief solver
-     * \return
-     */
-    ODESolver *heatSolver() const;
-
-    /*!
-     * \brief soluteSolvers
-     * \return
-     */
-    std::vector<ODESolver*> soluteSolvers() const;
+    ODESolver *odeSolver() const ;
 
     /*!
      * \brief waterDensity
@@ -319,6 +308,18 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \return
      */
     std::string solute(int soluteIndex) const;
+
+    /*!
+     * \brief simulateWaterAge
+     * \return
+     */
+    bool simulateWaterAge() const;
+
+    /*!
+     * \brief setSimulateWaterAge
+     * \param simulate
+     */
+    void setSimulateWaterAge(bool simulate);
 
     /*!
      * \brief verbose
@@ -625,26 +626,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \brief solveHydHead
      * \param timeStep
      */
-    void solveHydHead(double timeStep);
-
-    /*!
-     * \brief solveHeat
-     * \param timeStep
-     */
-    void solveHeatTransport(double timeStep);
-
-    /*!
-     * \brief solveSoluteContinuity
-     * \param soluteIndex
-     * \param timeStep
-     */
-    void solveSoluteTransport(int soluteIndex, double timeStep);
-
-    /*!
-     * \brief computeDHeadDt
-     * \param timeStep
-     */
-    static void computeDHydHeadDt(double t, double y[], double dydt[], void *userData);
+    void solve(double timeStep);
 
     /*!
      * \brief computeDTDt
@@ -654,16 +636,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      * \param y
      * \param dydt
      */
-    static void computeDTDt(double t, double y[], double dydt[], void *userData);
-
-    /*!
-     * \brief computeSoluteDYDt
-     * \param t
-     * \param y
-     * \param dydt
-     * \param userData
-     */
-    static void computeDSoluteDt(double t, double y[], double dydt[], void *userData);
+    static void computeDYDt(double t, double y[], double dydt[], void *userData);
 
     /*!
      * \brief readInputFileOptionTag
@@ -799,6 +772,13 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
      */
     void calculateDistanceFromUpstreamJunction(Element *element);
 
+    /*!
+     * \brief breadthFirstSearchSetIndex
+     * \param cell
+     * \param bfsIndex
+     */
+    void breadthFirstSearchSetIndex(ElementCell *cell, int &bfsIndex);
+
   private:
 
     std::vector<std::string> m_solutes; // Names of the solutes.
@@ -824,8 +804,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_minSolute, //array for tracking minimum solute concentrations
     m_totalSoluteMassBalance, // Tracks total mass balance of solutes (kg)
     m_totalExternalSoluteMassBalance, //Tracks total mass balance from external sources (kg)
-    m_currHydHead,
-    m_outHydHead,
+    m_solverCurrentValues,
+    m_solverOutValues,
     m_currTemps,
     m_outTemps,
     m_solute_first_order_k,
@@ -834,8 +814,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
 
     const static float dir[];
 
-    std::vector<std::vector<double>> m_currSoluteConcs,
-                                     m_outSoluteConcs;
+    int m_tempIndex;
+    std::vector<int> m_soluteIndexes;
 
     std::unordered_map<std::string, QSharedPointer<TimeSeries>> m_timeSeries;
 
@@ -848,12 +828,14 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_addedSoluteCount,
     m_numLeftCellsPerElement,
     m_numRightCellsPerElement,
-    m_totalCellsPerElement;
+    m_totalCellsPerElement,
+    m_numSolutes = 0;
 
     bool m_useAdaptiveTimeStep, //Use the adaptive time step option
     m_verbose, //Print simulation information to console
     m_solveHeatTransport,
-    m_flushToDisk;
+    m_flushToDisk,
+    m_simulateWaterAge = false;
 
     //Element junctions
     std::vector<ElementJunction*> m_elementJunctions;
@@ -867,9 +849,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     std::vector<IBoundaryCondition*> m_boundaryConditions;
 
     //Solver Objects
-    ODESolver *m_hydHeadSolver;
-    ODESolver *m_heatSolver; //Heat solver
-    std::vector<ODESolver*> m_soluteSolvers; //Solute solvers
+    ODESolver *m_odeSolver;
 
     //Global water properties
     double m_waterDensity = 1000, //kg/m^3
@@ -901,8 +881,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_outputNetCDFFileInfo; //Output NetCDF filepath
 
 #ifdef USE_NETCDF
-     ThreadSafeNcFile *m_outputNetCDF = nullptr; //NetCDF output file object
-     std::unordered_map<std::string, ThreadSafeNcVar> m_outNetCDFVariables;
+    ThreadSafeNcFile *m_outputNetCDF = nullptr; //NetCDF output file object
+    std::unordered_map<std::string, ThreadSafeNcVar> m_outNetCDFVariables;
 #endif
 
     static const std::unordered_map<std::string, int> m_inputFileFlags; //Input file flags

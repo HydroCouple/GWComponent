@@ -34,7 +34,32 @@ EdgeBC::~EdgeBC()
 void EdgeBC::findAssociatedGeometries()
 {
   m_profile.clear();
+  m_neighbourCells.clear();
   m_parentModel->findProfile(m_startElement, m_endElement, m_profile);
+
+  switch (m_edge)
+  {
+    case RIGHT:
+      {
+        m_nEdge = LEFT;
+      }
+      break;
+    case LEFT:
+      {
+        m_nEdge = RIGHT;
+      }
+      break;
+    case UP:
+      {
+        m_nEdge = DOWN;
+      }
+      break;
+    case DOWN:
+      {
+        m_nEdge = UP;
+      }
+      break;
+  }
 }
 
 void EdgeBC::prepare()
@@ -55,6 +80,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeHydHead[m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeHydHead[m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -70,6 +102,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradHydHead[m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeGradHydHead[m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -85,6 +124,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeTemperatures[m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeTemperatures[m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -100,6 +146,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradTemperatures[m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeGradTemperatures[m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -115,6 +168,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -130,6 +190,13 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+
+            ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbors[m_nEdge]))
+            {
+              nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+            }
           }
         }
       }
@@ -235,6 +302,13 @@ void EdgeBC::applyHydHeadBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeHydHead[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeHydHead[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -249,6 +323,13 @@ void EdgeBC::applyHydHeadBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeHydHead[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeHydHead[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -270,6 +351,13 @@ void EdgeBC::applyGradHydHeadBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeGradHydHead[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradHydHead[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -284,6 +372,13 @@ void EdgeBC::applyGradHydHeadBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradHydHead[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradHydHead[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -305,6 +400,13 @@ void EdgeBC::applyTempBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeTemperatures[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeTemperatures[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -319,6 +421,13 @@ void EdgeBC::applyTempBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeTemperatures[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeTemperatures[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -340,6 +449,13 @@ void EdgeBC::applyGradTempBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeGradTemperatures[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradTemperatures[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -354,6 +470,13 @@ void EdgeBC::applyGradTempBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradTemperatures[m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradTemperatures[m_nEdge].value = value;
+          }
         }
       }
     }
@@ -375,6 +498,13 @@ void EdgeBC::applySoluteBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+          }
         }
       }
     }
@@ -389,6 +519,13 @@ void EdgeBC::applySoluteBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+          }
         }
       }
     }
@@ -410,6 +547,13 @@ void EdgeBC::applyGradSoluteBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+          }
         }
       }
     }
@@ -424,6 +568,13 @@ void EdgeBC::applyGradSoluteBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+
+          ElementCell *nCell = nullptr;
+
+          if((nCell = elementCell->neighbors[m_nEdge]))
+          {
+            nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+          }
         }
       }
     }

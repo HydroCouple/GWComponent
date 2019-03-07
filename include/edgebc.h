@@ -8,6 +8,7 @@
 #include "iboundarycondition.h"
 
 struct Element;
+struct ElementCell;
 class TimeSeries;
 class GWModel;
 class EdgeBC;
@@ -105,13 +106,14 @@ class GWCOMPONENT_EXPORT EdgeBC : public QObject,
   private:
 
     Variable m_variable;
-    Edge m_edge;
+    Edge m_edge, m_nEdge;
     Element *m_startElement, *m_endElement;
     int m_cellLength;
     int m_startElementCell, m_endElementCell;
     int m_soluteIndex;
     bool m_match;
     std::vector<Element*> m_profile;
+    std::vector<ElementCell*> m_neighbourCells;
     QSharedPointer<TimeSeries> m_timeSeries;
     ApplyBoundaryVarBC m_applyBCFunction;
     DataCursor *m_dataCursor;

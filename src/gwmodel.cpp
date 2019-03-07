@@ -44,8 +44,7 @@ GWModel::GWModel(GWComponent *component)
     m_useAdaptiveTimeStep(true),
     m_verbose(true),
     m_solveHeatTransport(false),
-    m_hydHeadSolver(nullptr),
-    m_heatSolver(nullptr),
+    m_odeSolver(nullptr),
     m_waterDensity(1000.0),
     m_cp(4184),
     m_sedDensity(1970),
@@ -61,8 +60,7 @@ GWModel::GWModel(GWComponent *component)
     m_retrieveCouplingDataFunction(nullptr),
     m_component(component)
 {
-  m_hydHeadSolver = new ODESolver(1, ODESolver::CVODE_ADAMS);
-  m_heatSolver = new ODESolver(1, ODESolver::CVODE_ADAMS);
+  m_odeSolver = new ODESolver(1, ODESolver::CVODE_ADAMS);
 }
 
 GWModel::~GWModel()
@@ -80,17 +78,7 @@ GWModel::~GWModel()
   m_elementJunctions.clear();
   m_elementJunctionsById.clear();
 
-
-  delete m_hydHeadSolver;
-  delete m_heatSolver;
-
-
-  for(size_t i = 0; i < m_soluteSolvers.size(); i++)
-  {
-    delete m_soluteSolvers[i];
-  }
-
-  m_soluteSolvers.clear();
+  delete m_odeSolver;
 
   closeOutputFiles();
 
@@ -180,19 +168,9 @@ double GWModel::currentDateTime() const
   return m_currentDateTime;
 }
 
-ODESolver *GWModel::hydHeadSolver() const
+ODESolver *GWModel::odeSolver() const
 {
-  return m_hydHeadSolver;
-}
-
-ODESolver *GWModel::heatSolver() const
-{
-  return m_heatSolver;
-}
-
-std::vector<ODESolver*> GWModel::soluteSolvers() const
-{
-  return m_soluteSolvers;
+  return m_odeSolver;
 }
 
 double GWModel::waterDensity() const
@@ -267,19 +245,39 @@ void GWModel::setDefaultHydraulicConductivityY(double hydConY)
 
 int GWModel::numSolutes() const
 {
-  return (int) m_solutes.size();
+  return m_numSolutes;
 }
 
 void GWModel::setNumSolutes(int numSolutes)
 {
-  for(size_t i = 0; i < m_soluteSolvers.size(); i++)
+  m_numSolutes = numSolutes >= 0 ? numSolutes : 0;
+
+  if(m_simulateWaterAge)
   {
-    delete m_soluteSolvers[i];
+    int size = m_numSolutes + 1;
+
+    m_solutes.resize(size);
+    m_solute_first_order_k.resize(size, 0.0);
+    m_solute_kd.resize(size, 0.0);
+    m_solute_molecular_diff.resize(size, 0.0);
+    m_maxSolute.resize(size, 0.0);
+    m_minSolute.resize(size, 0.0);
+    m_totalSoluteMassBalance.resize(size, 0.0);
+    m_totalExternalSoluteMassBalance.resize(size, 0.0);
+
+    for(int i = 0 ; i < size; i++)
+    {
+      if(i < size - 1)
+      {
+        m_solutes[i] = "Solute_" + std::to_string(i + 1);
+      }
+      else
+      {
+        m_solutes[i] = "WATER_AGE";
+      }
+    }
   }
-
-  m_soluteSolvers.clear();
-
-  if(numSolutes >= 0)
+  else if(m_numSolutes >= 0)
   {
     m_solutes.resize(numSolutes);
     m_solute_first_order_k.resize(numSolutes, 0.0);
@@ -292,7 +290,6 @@ void GWModel::setNumSolutes(int numSolutes)
 
     for(size_t i = 0 ; i < m_solutes.size(); i++)
     {
-      m_soluteSolvers.push_back(new ODESolver(m_elements.size(), ODESolver::CVODE_ADAMS));
       m_solutes[i] = "Solute_" + std::to_string(i + 1);
     }
   }
@@ -306,6 +303,17 @@ void GWModel::setSoluteName(int soluteIndex, const std::string &soluteName)
 std::string GWModel::solute(int soluteIndex) const
 {
   return m_solutes[soluteIndex];
+}
+
+bool GWModel::simulateWaterAge() const
+{
+  return m_simulateWaterAge;
+}
+
+void GWModel::setSimulateWaterAge(bool simulate)
+{
+  m_simulateWaterAge = simulate;
+  setNumSolutes(m_numSolutes);
 }
 
 int GWModel::numElementJunctions() const
@@ -455,7 +463,7 @@ Element *GWModel::getElement(int index)
 
 RetrieveCouplingData GWModel::retrieveCouplingDataFunction() const
 {
-
+return nullptr;
 }
 
 void GWModel::setRetrieveCouplingDataFunction(RetrieveCouplingData retrieveCouplingDataFunction)
@@ -552,7 +560,7 @@ bool GWModel::initializeElements(std::list<string> &errors)
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
-      elementCell->index  = i * m_totalCellsPerElement + j;
+      elementCell->index  = -1;// i * m_totalCellsPerElement + j;
     }
 
     for(int f = m_numLeftCellsPerElement - 1; f > -1; f--)
@@ -578,35 +586,39 @@ bool GWModel::initializeElements(std::list<string> &errors)
     element->initialize();
   }
 
-  m_currHydHead.resize(m_totalCellsPerElement * m_elements.size(), 0.0);
-  m_outHydHead.resize(m_totalCellsPerElement * m_elements.size(), 0.0);
+  int bfsIndex = 0;
 
-  m_currTemps.resize(m_totalCellsPerElement * m_elements.size(), 0.0);
-  m_outTemps.resize(m_totalCellsPerElement * m_elements.size(), 0.0);
+  ElementCell *startCell = m_elements[0]->elementCells[0];
+  startCell->index = bfsIndex;
 
-  m_currSoluteConcs.resize(m_solutes.size(), std::vector<double>(m_totalCellsPerElement * m_elements.size(), 0.0));
-  m_outSoluteConcs.resize(m_solutes.size(), std::vector<double>(m_totalCellsPerElement * m_elements.size(), 0.0));
+  breadthFirstSearchSetIndex(startCell, bfsIndex);
 
   return true;
 }
 
 bool GWModel::initializeSolvers(std::list<string> &errors)
 {
-  m_hydHeadSolver->setSize(m_elements.size() * m_totalCellsPerElement);
-  m_hydHeadSolver->initialize();
+  int totalCells =  m_elements.size() * m_totalCellsPerElement;
+  int totalSize = totalCells;
 
   if(m_solveHeatTransport)
   {
-    m_heatSolver->setSize(m_elements.size() * m_totalCellsPerElement);
-    m_heatSolver->initialize();
+    m_tempIndex = totalSize;
+    totalSize += totalCells;
   }
 
-  for(size_t i = 0; i < m_soluteSolvers.size(); i++)
+  m_soluteIndexes.clear();
+
+  for(size_t s = 0 ; s < m_solutes.size(); s++)
   {
-    ODESolver *solver =  m_soluteSolvers[i];
-    solver->setSize(m_elements.size() * m_totalCellsPerElement);
-    solver->initialize();
+    m_soluteIndexes.push_back(totalSize);
+    totalSize += totalCells;
   }
+
+  m_solverCurrentValues.resize(totalSize, 0.0);
+  m_solverOutValues.resize(totalSize,0.0);
+  m_odeSolver->setSize(totalSize);
+  m_odeSolver->initialize();
 
   return true;
 }
@@ -672,7 +684,34 @@ void GWModel::calculateDistanceFromUpstreamJunction(Element *element)
   //  }
 }
 
+void GWModel::breadthFirstSearchSetIndex(ElementCell *cell, int &bfsIndex)
+{
+  int *marked = new int[4]();
 
+  for(int i = 0; i < 4; i++)
+  {
+    ElementCell *n = cell->neighbors[i];
+
+    if(n && n->index == -1)
+    {
+      bfsIndex++;
+      n->index = bfsIndex;
+      marked[i] = 1;
+    }
+  }
+
+  for(int i = 0; i < 4; i++)
+  {
+    ElementCell *n = cell->neighbors[i];
+
+    if(n && marked[i])
+    {
+      breadthFirstSearchSetIndex(n, bfsIndex);
+    }
+  }
+
+  delete[] marked;
+}
 
 
 

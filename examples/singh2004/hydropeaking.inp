@@ -7,19 +7,19 @@ MIN_TIME_STEP   0.05
 NUM_INITIAL_FIXED_STEPS   10
 USE_ADAPTIVE_TIME_STEP    YES
 TIME_STEP_RELAXATION_FACTOR   0.9
-HYD_HEAD_SOLVER  BDF
-HYD_HEAD_SOLVER_ABS_TOL  1e-10
-HYD_HEAD_SOLVER_REL_TOL  1e-10
-HYD_HEAD_LINEAR_SOLVER PCG
-SOLVE_TEMP      NO
-TEMP_SOLVER     ADAMS
-TEMP_SOLVER_ABS_TOL       1e-10
-TEMP_SOLVER_REL_TOL       1e-10
+ADVECTION_MODE  UPWIND
+SOLVER  BDF
+SOLVER_ABS_TOL  1e-10
+SOLVER_REL_TOL  1e-10
+HYD_HEAD_LINEAR_SOLVER GMRES
+SOLVE_TEMP      YES
 WATER_DENSITY             1000
 WATER_SPECIFIC_HEAT_CAPACITY    4184
 DEFAULT_SED_DENSITY             1970
 DEFAULT_SED_SPECIFIC_HEAT_CAPACITY 1480
 DEFAULT_POROSITY                   0.3
+DISPERSIVITY_X   0.005
+DISPERSIVITY_Y   0.005
 DEFAULT_HYD_COND_X    0.0000
 DEFAULT_HYD_COND_Y    0.0001
 DEFAULT_SPECIFIC_STORAGE   0.3
@@ -55,12 +55,11 @@ J_5	50	0	-20.00000
 [ELEMENTS]												
 ;;ELEMENT	FROMJUNCTION	TOJUNCTION	LENGTH	BOTTOM_ELEV	TOP_ELEV	INIT_HYD_HEAD	HYD_CON_Z	CHANNEL_WIDTH	CHANNEL_WSE	CHANNEL_BED_THICKNESS	CHANNEL_BED_K	TEMPERATURE	CHANNEL_TEMPERATURE	SOLUTE1_CONC	CHANNEL_SOLUTE1_CONC
 ;;====================================================================================================================================================================================	====================================================================================================================================================================================	====================================================================================================================================================================================	====================================================================================================================================================================================				====================================================================================================================================================================================	====================================================================================================================================================================================	====================================================================================================================================================================================					
-L_1	J_0	J_1	10.0	-20.0	3.0	0.0	0.0	80.0	0.0	0.0001	0.000000	10.0	10.0	10.0	10.0
-L_2	J_1	J_2	10.0	-20.0	3.0	0.0	0.0	80.0	0.0	0.0001	0.000000	10.0	10.0	10.0	10.0
-L_3	J_2	J_3	10.0	-20.0	3.0	0.0	0.0	80.0	0.0	0.0001	0.000000	10.0	10.0	10.0	10.0
-L_4	J_3	J_4	10.0	-20.0	3.0	0.0	0.0	80.0	0.0	0.0001	0.000000	10.0	10.0	10.0	10.0
-L_5	J_4	J_5	10.0	-20.0	3.0	0.0	0.0	80.0	0.0	0.0001	0.000000	10.0	10.0	10.0	10.0
-
+L_1	J_0	J_1	10	-20	3	0	0.00000	0.00000	0.00000	0.00010	0.00000	30.0000	30.0000	10.00000	10.00000
+L_2	J_1	J_2	10	-20	3	0	0.00000	0.00000	0.00000	0.00010	0.00000	30.0000	30.0000	10.00000	10.00000
+L_3	J_2	J_3	10	-20	3	0	0.00000	0.00000	0.00000	0.00010	0.00000	30.0000	30.0000	10.00000	10.00000
+L_4	J_3	J_4	10	-20	3	0	0.00000	0.00000	0.00000	0.00010	0.00000	30.0000	30.0000	10.00000	10.00000
+L_5	J_4	J_5	10	-20	3	0	0.00000	0.00000	0.00000	0.00010	0.00000	30.0000	30.0000	10.00000	10.00000
 
 [ELEMENT_CELL_WIDTHS]																																																											
 ;;CELL1	CELL2	CELL3	CELL4	CELL5	CELL6	CELL7	CELL8	CELL9	CELL10	CELL11	CELL12	CELL13	CELL14	CELL15	CELL16	CELL17	CELL18	CELL19	CELL20	CELL21	CELL22	CELL23	CELL24	CELL25	CELL26	CELL27	CELL28	CELL29	CELL30	CELL31	CELL32	CELL33	CELL34	CELL35	CELL36	CELL37	CELL38	CELL39	CELL40	CELL41	CELL42	CELL43	CELL44	CELL45	CELL46	CELL47	CELL48	CELL49	CELL50	CELL51	CELL52	CELL53	CELL54	CELL55	CELL56	CELL57	CELL58	CELL59	CELL60	CELL61	CELL62	CELL63	CELL64	CELL65	CELL66	CELL67	CELL68	CELL69	CELL70	CELL71	CELL72	CELL73	CELL74	CELL75	CELL76	CELL77	CELL78	CELL79	CELL80	CELL81	CELL82	CELL83	CELL84	CELL85	CELL86	CELL87	CELL88	CELL89	CELL90	CELL91	CELL92	CELL93	CELL94	CELL95	CELL96	CELL97	CELL98	CELL99	CELL100	CELL101	CELL102	CELL103	CELL104	CELL105	CELL106	CELL107	CELL108	CELL109	CELL110	CELL111	CELL112	CELL113	CELL114	CELL115	CELL116	CELL117	CELL118	CELL119	CELL120	CELL121	CELL122	CELL123	CELL124	CELL125	CELL126	CELL127	CELL128	CELL129	CELL130	CELL131	CELL132	CELL133	CELL134	CELL135	CELL136	CELL137	CELL138	CELL139	CELL140	CELL141	CELL142	CELL143	CELL144	CELL145	CELL146	CELL147	CELL148	CELL149	CELL150
@@ -90,8 +89,10 @@ SinWaveHydHead       ./sin_wave_hyd_head.csv
 [BOUNDARY_CONDITIONS]
 ;;VARIABLE     OPTIONAL_SOLUTENAME   EDGE     START_ELEMENT     END_ELEMENT     START_CELL     END_CELL      TYPE          VALUE/TIMESERIES
 ;;=========================================================================================================================================
-HYD_HEAD                             RIGHT    L_1               L_5             99             99            TIMESERIES    SinWaveHydHead
-HYD_HEAD                             LEFT     L_1               L_5             100            100           TIMESERIES    SinWaveHydHead
+HYD_HEAD                           RIGHT    L_1               L_5             99             99            TIMESERIES    SinWaveHydHead
+;;HYD_HEAD                             LEFT     L_1               L_5             0              0             TIMESERIES    SinWaveHydHead
+;;TEMPERATURE                        LEFT     L_1               L_5             0               0            VALUE         30.0
+TEMPERATURE                          RIGHT    L_1               L_5             199           199            VALUE         30.0
 
 [SOURCES]
 ;;VARIABLE   OPTIONAL_SOLUTENAME   START_ELEMENT     END_ELEMENT     START_CELL     END_CELL   GEOMETRY_MULTIPLIER   TYPE         VALUE/TIMESERIES

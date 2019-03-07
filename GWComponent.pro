@@ -54,7 +54,8 @@ HEADERS += ./include/stdafx.h\
            ./include/elementcellsourcebc.h \
            ./include/channelbc.h \
            ./include/elementinput.h \
-           ./include/elementoutput.h
+           ./include/elementoutput.h \
+    include/elementcelladvupwind.h
 
 SOURCES +=./src/stdafx.cpp \
           ./src/gwcomponent.cpp \

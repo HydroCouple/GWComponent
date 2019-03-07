@@ -166,6 +166,11 @@ class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
     void createChannelSoluteInput(int soluteIndex);
 
     /*!
+     * \brief createWaterAgeFluxInput
+     */
+    void createWaterAgeFluxInput();
+
+    /*!
      * \brief createOutputs
      */
     void createOutputs() override;
@@ -185,6 +190,11 @@ class GWCOMPONENT_EXPORT GWComponent: public AbstractTimeModelComponent,
      * \param soluteIndex
      */
     void createChannelOutflowSoluteFluxOutput(int soluteIndex);
+
+    /*!
+     * \brief createWaterAgeFluxOutput
+     */
+    void createWaterAgeFluxOutput();
 
   private:
 

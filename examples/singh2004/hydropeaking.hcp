@@ -37,8 +37,15 @@
                 </Argument>
             </Arguments>
             <ExchangeItemPositions>
-                <Outputs/>
-                <Inputs/>
+                <Outputs>
+                    <Output Id="ChannelOutflowHeat" XPos="366" YPos="305.5" Caption="Channel Outflow Heat (J/s)"/>
+                    <Output Id="ChannelOutflow" XPos="366" YPos="485.5" Caption="Channel Outflow (m^3/s)"/>
+                </Outputs>
+                <Inputs>
+                    <Input Id="ChannelWidthInput" XPos="1596" YPos="305.5" Caption="Channel Width (m)"/>
+                    <Input Id="ChannelTemperatureInput" XPos="1596" YPos="665.5" Caption="Channel Temperature (m)"/>
+                    <Input Id="ChannelWSEInput" XPos="1596" YPos="485.5" Caption="Channel Water Surface Elevation (m)"/>
+                </Inputs>
             </ExchangeItemPositions>
         </ModelComponent>
     </ModelComponents>

@@ -31,6 +31,7 @@ Element::Element(const std::string &id, ElementJunction *upstream, ElementJuncti
     model(model)
 {
 
+  channelTemperature = 0;
   hydConZ = model->m_hydConZ;
 
   upstream->outgoingElements.insert(this);
@@ -64,13 +65,13 @@ Element::~Element()
 
 void Element::initialize()
 {
+  channelTemperature = 0;
+
   setUpstreamElement();
   setDownStreamElement();
 
   channelInflow = 0.0;
   channelHeatFlux = 0.0;
-
-  initializeSolutes();
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)
   {
@@ -100,10 +101,10 @@ void Element::initializeSolutes()
     delete[] channelSoluteFlux; channelSoluteFlux = nullptr;
   }
 
-  if(model->numSolutes() > 0)
+  if(model->m_solutes.size() > 0)
   {
-    channelSoluteConcs = new double[model->numSolutes()]();
-    channelSoluteFlux = new double[model->numSolutes()]();
+    channelSoluteConcs = new double[model->m_solutes.size()]();
+    channelSoluteFlux = new double[model->m_solutes.size()]();
   }
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)

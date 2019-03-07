@@ -19,56 +19,10 @@ void GWModel::update()
     m_timeStep = computeTimeStep();
 
     calculatePreComputedHydHeadVariables();
+    calculatePreComputedTempVariables();
+    calculatePreComputedSoluteVariables();
 
-    solveHydHead(m_timeStep);
-
-    if(m_solveHeatTransport && m_solutes.size())
-    {
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-      for(int j = 0; j < 2; j++)
-      {
-        switch (j)
-        {
-          case 0:
-            {
-              calculatePreComputedTempVariables();
-              solveHeatTransport(m_timeStep);
-            }
-            break;
-          case 1:
-            {
-              calculatePreComputedSoluteVariables();
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-              for(int i = 0 ; i < (int)m_solutes.size(); i++)
-              {
-                solveSoluteTransport(i, m_timeStep);
-              }
-            }
-            break;
-        }
-      }
-    }
-    else if(m_solveHeatTransport)
-    {
-      calculatePreComputedTempVariables();
-      solveHeatTransport(m_timeStep);
-    }
-    else if(m_solutes.size())
-    {
-      calculatePreComputedSoluteVariables();
-
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-      for(int i = 0 ; i < (int)m_solutes.size(); i++)
-      {
-        solveSoluteTransport(i, m_timeStep);
-      }
-    }
+    solve(m_timeStep);
 
     m_prevDateTime = m_currentDateTime;
     m_currentDateTime = m_currentDateTime + m_timeStep / 86400.0;
@@ -161,111 +115,61 @@ void GWModel::applyInitialConditions()
   //Set next output time
   m_nextOutputTime += m_outputInterval / 86400.0;
 
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //    Element *element = m_elements[i];
-
-  //    ElementCell *leftCell = element->elementCells[0];
-  //    ElementCell *rightCell = element->elementCells[m_totalCellsPerElement - 1];
-
-  //    leftCell->edgeGradHydHead[2].isBC = true;
-  //    rightCell->edgeGradHydHead[0].isBC = true;
-
-  //    leftCell->edgeTemperatures[2].isBC = true;
-  //    leftCell->edgeTemperatures[2].value = 12;
-
-  //    leftCell->edgeGradHydHead[2].value = 0.05;
-  //    rightCell->edgeGradHydHead[0].value = -0.05;
-  //  }
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //    Element *element = m_elements[i];
-
-  //    ElementCell *leftCell = element->elementCells[0];
-  //    ElementCell *rightCell = element->elementCells[m_totalCellsPerElement - 1];
-
-  //    leftCell->gradHydHead[2].isBC = true;
-  //    rightCell->gradHydHead[0].isBC = true;
-
-  //    leftCell->edgeTemperatures[2].isBC = true;
-  //    leftCell->edgeTemperatures[2].value = 10;
-
-  //    leftCell->gradHydHead[2].value = 0.01;
-  //    rightCell->gradHydHead[0].value = -0.01;
-  //  }
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //  Element *element = m_elements[0];
-
-  //  ElementCell *leftCell = element->elementCells[0];
-  //  ElementCell *rightCell = element->elementCells[0];
-  //  leftCell->edgeSoluteConcs[0][0].isBC = true;
-  //  rightCell->edgeSoluteConcs[0][2].isBC = true;
-
-  //  leftCell->edgeSoluteConcs[0][0].value = 0;
-  //  rightCell->edgeSoluteConcs[0][2].value = 10;
-
-  //  rightCell->soluteConcs[0].value = rightCell->prevSoluteConcs[0].value = 10.0;
-  //  }
-
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //  Element *element = m_elements[2];
-  //  ElementCell *leftCell = element->elementCells[99];
-  //  ElementCell *rightCell = element->elementCells[100];
-  //  leftCell->edgeHydHead[0].isBC = true;
-  //  rightCell->edgeHydHead[2].isBC = true;
-
-  //  double amplitude = 1.0;
-  //  double phase = 0.0;
-  //  double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-  //  double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-  //  leftCell->edgeHydHead[0].value = head;
-  //  rightCell->edgeHydHead[2].value = head;
-  //  }
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //    Element *element = m_elements[i];
-
-  //    double amplitude = 1.0;
-  //    double phase = 0.0;
-  //    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-  //    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-  //    element->channelWSE = head;
-  //  }
-
 }
 
 void GWModel::applyBoundaryConditions(double dateTime)
 {
   //reset external fluxes
+
+  if(m_simulateWaterAge)
+  {
 #ifdef USE_OPENMMP
 #pragma omp parallel for
 #endif
-  for(size_t i = 0 ; i < m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(size_t j = 0; j < element->elementCells.size(); j++)
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
     {
-      ElementCell *elementCell = element->elementCells[j];
-      elementCell->externalInflow = 0.0;
-      elementCell->externalHeatFluxes = 0.0;
+      Element *element = m_elements[i];
 
-      for(size_t k = 0; k < m_solutes.size(); k++)
+#ifdef USE_OPENMMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < (int)element->elementCells.size(); j++)
       {
-        elementCell->externalSoluteFluxes[k] = 0.0;
-      }
+        ElementCell *elementCell = element->elementCells[j];
+        elementCell->externalInflow = 0.0;
+        elementCell->externalHeatFluxes = 0.0;
+        elementCell->externalSoluteFluxes[m_numSolutes] = elementCell->volume / 86400.0;
 
-      //      if(m_currentDateTime - m_startDateTime >= 1.0 && i == 42 && j == 103)
-      //      if(m_currentDateTime - m_startDateTime >= 1.0 && j == 50 && i == 9)
-      //      {
-      //        elementCell->externalHeatFluxes += -60.0 *  elementCell->depth;
-      //      }
+        for(int k = 0; k < m_numSolutes; k++)
+        {
+          elementCell->externalSoluteFluxes[k] = 0.0;
+        }
+      }
+    }
+  }
+  else
+  {
+#ifdef USE_OPENMMP
+#pragma omp parallel for
+#endif
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
+    {
+      Element *element = m_elements[i];
+
+#ifdef USE_OPENMMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < (int)element->elementCells.size(); j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+        elementCell->externalInflow = 0.0;
+        elementCell->externalHeatFluxes = 0.0;
+
+        for(int k = 0; k < m_numSolutes; k++)
+        {
+          elementCell->externalSoluteFluxes[k] = 0.0;
+        }
+      }
     }
   }
 
@@ -277,36 +181,6 @@ void GWModel::applyBoundaryConditions(double dateTime)
     IBoundaryCondition *boundaryCondition = m_boundaryConditions[i];
     boundaryCondition->applyBoundaryConditions(dateTime);
   }
-
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //  Element *element = m_elements[2];
-  //  ElementCell *leftCell = element->elementCells[99];
-  //  ElementCell *rightCell = element->elementCells[100];
-  //  leftCell->edgeHydHead[0].isBC = true;
-  //  rightCell->edgeHydHead[2].isBC = true;
-
-  //  double amplitude = 1.0;
-  //  double phase = 0.0;
-  //  double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-  //  double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-  //  leftCell->edgeHydHead[0].value = head;
-  //  rightCell->edgeHydHead[2].value = head;
-
-  //  }
-
-
-  //  for(size_t i = 0; i < m_elements.size(); i++)
-  //  {
-  //    Element *element = m_elements[i];
-  //    double amplitude = 1.0;
-  //    double phase = 0.0;
-  //    double elapsed = (m_currentDateTime - m_startDateTime) * 86400.0;
-  //    double head = amplitude * sin(0.000189804556154383 * elapsed + phase);
-  //    element->channelWSE = head;
-  //  }
-
 }
 
 double GWModel::computeTimeStep()
@@ -377,12 +251,13 @@ double GWModel::computeTimeStep()
 void GWModel::calculatePreComputedHydHeadVariables()
 {
 #ifdef USE_OPENMP
-//#pragma omp parallel for
+#pragma omp parallel for
 #endif
   for(int i = 0 ; i < (int)m_elements.size()  ; i++)
   {
     Element *element = m_elements[i];
     element->channelInflow = 0.0;
+    element->channelInflowFlux = 0.0;
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
@@ -432,200 +307,204 @@ void GWModel::calculatePreComputedSoluteVariables()
   }
 }
 
-void GWModel::solveHydHead(double timeStep)
+void GWModel::solve(double timeStep)
 {
+  if(m_solveHeatTransport)
+  {
+
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
     {
-      ElementCell *elementCell = element->elementCells[j];
-      m_currHydHead[elementCell->index] = elementCell->hydHead.value;
-      m_outHydHead[elementCell->index] = elementCell->hydHead.value;
+      Element *element = m_elements[i];
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+        m_solverCurrentValues[elementCell->index] = elementCell->hydHead.value;
+        m_solverOutValues[elementCell->index] = elementCell->hydHead.value;
+        m_solverCurrentValues[elementCell->index + m_tempIndex] = elementCell->temperature.value;
+        m_solverOutValues[elementCell->index + m_tempIndex] = elementCell->temperature.value;
+
+        for(size_t s = 0 ; s < m_solutes.size(); s++)
+        {
+          m_solverCurrentValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
+          m_solverOutValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
+        }
+      }
+    }
+
+    //Solve using ODE solver
+    SolverUserData solverUserData; solverUserData.model = this;
+
+    if(m_odeSolver->solve(m_solverCurrentValues.data(), m_solverCurrentValues.size() , 0, timeStep,
+                          m_solverOutValues.data(), &GWModel::computeDYDt, &solverUserData))
+    {
+      printf("Solver failed \n");
+    }
+
+    //Apply computed values;
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
+    {
+      Element *element = m_elements[i];
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+
+        elementCell->hydHead.value = m_solverOutValues[elementCell->index];
+        elementCell->temperature.value = m_solverOutValues[elementCell->index + m_tempIndex];
+
+        for(size_t s = 0 ; s < m_solutes.size(); s++)
+        {
+          elementCell->soluteConcs[s].value = m_solverOutValues[elementCell->index + m_soluteIndexes[s]];
+        }
+
+        elementCell->computeVolumeDerivative();
+      }
     }
   }
-
-  //Solve using ODE solver
-  SolverUserData solverUserData; solverUserData.model = this; solverUserData.variableIndex = -2;
-
-  if(m_hydHeadSolver->solve(m_currHydHead.data(), m_totalCellsPerElement * m_elements.size() , m_currentDateTime * 86400.0, timeStep,
-                            m_outHydHead.data(), &GWModel::computeDHydHeadDt, &solverUserData))
+  else
   {
-    printf("GWModel HydHead solver failed \n");
-  }
-
-  //Apply computed values;
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
     {
-      ElementCell *elementCell = element->elementCells[j];
-      double outHydHead = m_outHydHead[elementCell->index];
-      elementCell->hydHead.value = outHydHead;
-      elementCell->computeEdgeDepths();
+      Element *element = m_elements[i];
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+        m_solverCurrentValues[elementCell->index] = elementCell->hydHead.value;
+        m_solverOutValues[elementCell->index] = elementCell->hydHead.value;
+
+        for(size_t s = 0 ; s < m_solutes.size(); s++)
+        {
+          m_solverCurrentValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
+          m_solverOutValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
+        }
+      }
+    }
+
+    //Solve using ODE solver
+    SolverUserData solverUserData; solverUserData.model = this;
+
+    if(m_odeSolver->solve(m_solverCurrentValues.data(), m_solverCurrentValues.size() , m_currentDateTime * 86400.0, timeStep,
+                          m_solverOutValues.data(), &GWModel::computeDYDt, &solverUserData))
+    {
+      printf("Solver failed \n");
+    }
+
+    //Apply computed values;
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+    for(int i = 0 ; i < (int)m_elements.size(); i++)
+    {
+      Element *element = m_elements[i];
+
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+
+        elementCell->hydHead.value = m_solverOutValues[elementCell->index];
+        elementCell->temperature.value = m_solverOutValues[elementCell->index + m_tempIndex];
+
+        for(size_t s = 0 ; s < m_solutes.size(); s++)
+        {
+          elementCell->soluteConcs[s].value = m_solverOutValues[elementCell->index + m_soluteIndexes[s]];
+        }
+
+        elementCell->computeVolumeDerivative();
+      }
     }
   }
 }
 
-void GWModel::solveHeatTransport(double timeStep)
-{
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-  for(int i = 0 ; i < (int)m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      m_currTemps[elementCell->index] = elementCell->temperature.value;
-      m_outTemps[elementCell->index] = elementCell->temperature.value;
-    }
-  }
-
-  //Solve using ODE solver
-  SolverUserData solverUserData; solverUserData.model = this; solverUserData.variableIndex = -1;
-
-  if(m_heatSolver->solve(m_currTemps.data(), m_totalCellsPerElement * m_elements.size(), m_currentDateTime * 86400.0, timeStep,
-                         m_outTemps.data(), &GWModel::computeDTDt, &solverUserData))
-  {
-    printf("GWModel heat solver failed \n");
-  }
-
-  //Apply computed values;
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-  for(int i = 0 ; i < (int)m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      double outTemp = m_outTemps[elementCell->index];
-      elementCell->temperature.value = outTemp;
-    }
-  }
-}
-
-void GWModel::solveSoluteTransport(int soluteIndex, double timeStep)
-{
-  std::vector<double> &currentSoluteConcs = m_currSoluteConcs[soluteIndex];
-  std::vector<double> &outputSoluteConcs = m_outSoluteConcs[soluteIndex];
-
-  //Set initial values.
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-  for(size_t i = 0 ; i < m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      currentSoluteConcs[elementCell->index] = elementCell->soluteConcs[soluteIndex].value;
-      outputSoluteConcs[elementCell->index] = elementCell->soluteConcs[soluteIndex].value;
-    }
-  }
-
-  //Solve using ODE solver
-  SolverUserData solverUserData; solverUserData.model = this; solverUserData.variableIndex = soluteIndex;
-
-  if(m_soluteSolvers[soluteIndex]->solve(outputSoluteConcs.data(), m_totalCellsPerElement * m_elements.size(), m_currentDateTime * 86400.0, timeStep,
-                                         outputSoluteConcs.data(), &GWModel::computeDSoluteDt, &solverUserData))
-  {
-    printf("GWModel Solute solver failed \n");
-  }
-
-  //Apply computed values;
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-  for(size_t i = 0 ; i < m_elements.size(); i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      elementCell->soluteConcs[soluteIndex].value = outputSoluteConcs[elementCell->index];
-    }
-  }
-}
-
-void GWModel::computeDHydHeadDt(double t, double y[], double dydt[], void *userData)
+void GWModel::computeDYDt(double t, double y[], double dydt[], void *userData)
 {
   SolverUserData *solverUserData = (SolverUserData*) userData;
   GWModel *modelInstance = solverUserData->model;
-  double dt = t - (modelInstance->m_currentDateTime *  86400.0);
+
+  if(modelInstance->m_solveHeatTransport)
+  {
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+    for(int i = 0 ; i < (int)modelInstance->m_elements.size(); i++)
+    {
+      Element *element = modelInstance->m_elements[i];
 
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)modelInstance->m_elements.size(); i++)
-  {
-    Element *element = modelInstance->m_elements[i];
+      for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
+      {
+        ElementCell  *elementCell = element->elementCells[j];
+        dydt[elementCell->index] = elementCell->computeDHydHeadDt(t, y);
+      }
 
-    for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      double DHeadDt = elementCell->computeDHydHeadDt(dt,y);
-      dydt[elementCell->index] = DHeadDt;
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+      for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
+      {
+        ElementCell  *elementCell = element->elementCells[j];
+        dydt[elementCell->index + modelInstance->m_tempIndex] = elementCell->computeDTDt(t, &y[modelInstance->m_tempIndex]);
+
+        for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
+        {
+          dydt[elementCell->index + modelInstance->m_soluteIndexes[s]] = elementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+        }
+      }
     }
   }
-}
-
-void GWModel::computeDTDt(double t, double y[], double dydt[], void *userData)
-{
-  SolverUserData *solverUserData = (SolverUserData*) userData;
-  GWModel *modelInstance = solverUserData->model;
-  double dt = t - (modelInstance->m_currentDateTime *  86400.0);
+  else
+  {
+#ifdef USE_OPENMP
+#pragma omp parallel for
+#endif
+    for(int i = 0 ; i < (int)modelInstance->m_elements.size(); i++)
+    {
+      Element *element = modelInstance->m_elements[i];
 
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)modelInstance->m_elements.size(); i++)
-  {
-    Element *element = modelInstance->m_elements[i];
-
-    for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
-    {
-      ElementCell  *elementCell = element->elementCells[j];
-      double DTDt = elementCell->computeDTDt(dt,y);
-      dydt[elementCell->index] = DTDt;
-    }
-  }
-}
-
-void GWModel::computeDSoluteDt(double t, double y[], double dydt[], void *userData)
-{
-  SolverUserData *solverUserData = (SolverUserData*) userData;
-  GWModel *modelInstance = solverUserData->model;
-  double dt = t - (modelInstance->m_currentDateTime *  86400.0);
+      for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
+      {
+        ElementCell  *elementCell = element->elementCells[j];
+        dydt[elementCell->index] = elementCell->computeDHydHeadDt(t, y);
+      }
 
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)modelInstance->m_elements.size(); i++)
-  {
-    Element *element = modelInstance->m_elements[i];
-
-    for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
-    {
-      ElementCell  *elementCell = element->elementCells[j];
-      dydt[elementCell->index] = elementCell->computeDSoluteDt(dt,y,solverUserData->variableIndex);
+      for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
+      {
+        ElementCell  *elementCell = element->elementCells[j];
+        for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
+        {
+          dydt[elementCell->index + modelInstance->m_soluteIndexes[s]] = elementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+        }
+      }
     }
   }
 }
