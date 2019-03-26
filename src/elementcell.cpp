@@ -232,19 +232,10 @@ double ElementCell::computeDHydHeadDt(double dt, double H[])
     DHydHeadDt += (this->*computeEdgeHeadDerivs[i])(i, dt, H);
   }
 
-  qY = (-edgeFlows[0] + edgeFlows[2]) / 2.0;
-  qX = (-edgeFlows[1] + edgeFlows[3]) / 2.0;
-
-  //  if(dt > 0)
-  {
-    dvolume_dt = ((max(H[index] - bedRockElev, 0.0) * parentElement->length * width)
-                  - volume) / parentElement->model->m_timeStep;
-  }
-
   //compute river inflow
   DHydHeadDt += channelInflow;
   DHydHeadDt += externalInflow;
-  DHydHeadDt -= specificStorage * hydHead.value * dvolume_dt / depth;
+  //DHydHeadDt -= specificStorage * hydHead.value * dvolume_dt / depth;
   DHydHeadDt /= (specificStorage * parentElement->length * width);
 
   return DHydHeadDt;
@@ -267,12 +258,13 @@ double ElementCell::computeDTDt(double dt, double T[])
 
   //Channel Heat
   {
-    DTDt += channelHeatFlux / (rhom_Cm * volume);
+    DTDt += channelHeatFlux * (wettedWidth * parentElement->length) / (rhom_Cm * volume);
   }
 
   //Product rule subtract volume derivative
+  if(volume)
   {
-    DTDt -= T[index] * dvolume_dt / volume;
+     DTDt -= temperature.value * dvolume_dt/ volume;
   }
 
   return DTDt;
@@ -405,11 +397,6 @@ double ElementCell::computeDSoluteDt(double dt, double S[], int soluteIndex)
     //Compute dispersion
     DSoluteDt += computeDSoluteDtDispersion(dt, S, soluteIndex);
 
-    //subtract chain rule volume derivative
-    {
-      DSoluteDt -= (S[index]  * dvolume_dt) / (retardationFactor[soluteIndex] * volume);
-    }
-
     //First order reaction
     {
       DSoluteDt -= (soluteConcs[soluteIndex].value * parentElement->model->m_solute_first_order_k[soluteIndex]) / (retardationFactor[soluteIndex]);
@@ -417,12 +404,18 @@ double ElementCell::computeDSoluteDt(double dt, double S[], int soluteIndex)
 
     //Add channel solute
     {
-      DSoluteDt += channelSoluteFlux[soluteIndex] / (retardationFactor[soluteIndex] * volume);
+      DSoluteDt += channelSoluteFlux[soluteIndex] * wettedWidth * parentElement->length / (retardationFactor[soluteIndex] * volume);
     }
 
     //Add external sources
     {
       DSoluteDt += externalSoluteFluxes[soluteIndex] / (retardationFactor[soluteIndex] * volume);
+    }
+
+    //subtract product rule volume derivative
+    if(volume)
+    {
+      DSoluteDt -= (soluteConcs[soluteIndex].value  * dvolume_dt) / (retardationFactor[soluteIndex] * volume);
     }
   }
 
@@ -791,7 +784,7 @@ void ElementCell::computeChannelMassFlux()
 
   double lower = fabs(centerY) - width / 2.0;
   double upper = fabs(centerY) + width / 2.0;
-  double wettedWidth = 0.0;
+  wettedWidth = 0.0;
 
   if(parentElement->channelWidth / 2.0 > lower)
   {
@@ -841,43 +834,72 @@ void ElementCell::computeChannelMassFlux()
     channelInflowFlux = channelInflow / (wettedWidth * parentElement->length);
   }
 
-  parentElement->channelInflow += channelInflow;
-  parentElement->channelInflowFlux += parentElement->channelWidth > 0 ? channelInflowFlux * wettedWidth / parentElement->channelWidth : 0.0;
+  if(wettedWidth)
+  {
+    parentElement->channelInflow += channelInflow;
+    parentElement->channelInflowFlux += channelInflowFlux * wettedWidth / parentElement->channelWidth;
+  }
 }
 
 void ElementCell::computeChannelHeatFlux()
 {
   channelHeatFlux = 0.0;
 
-  if(channelInflow >= 0.0)
+  if(wettedWidth)
   {
-    channelHeatFlux = parentElement->model->m_waterDensity * parentElement->model->m_cp *
-                      channelInflow * parentElement->channelTemperature;
-  }
-  else
-  {
-    channelHeatFlux = parentElement->model->m_waterDensity * parentElement->model->m_cp *
-                      channelInflow * temperature.value;
-  }
 
-  parentElement->channelHeatFlux += channelHeatFlux;
+    if(channelInflow >= 0.0)
+    {
+      channelHeatFlux = parentElement->model->m_waterDensity * parentElement->model->m_cp *
+                        channelInflow * parentElement->channelTemperature;
+    }
+    else
+    {
+      channelHeatFlux = parentElement->model->m_waterDensity * parentElement->model->m_cp *
+                        channelInflow * temperature.value ;
+    }
+
+//    double disp =  parentElement->model->m_waterDensity *
+//                   parentElement->model->m_cp*
+//                   (dispersivity[0] + dispersivity[1]) * fabs(channelInflow) / (wettedWidth * parentElement->length * porosity * 2.0);
+//    disp += parentElement->model->m_cp * porosity + (porosity * parentElement->model->m_waterThermalConductivity + (1.0 - porosity) * sedThermalConductivity);
+
+//    channelHeatFlux += disp * wettedWidth * parentElement->length * (parentElement->channelTemperature - temperature.value) /( depth / 2);
+
+    parentElement->channelHeatRate += channelHeatFlux;
+
+    channelHeatFlux /= (wettedWidth * parentElement->length);
+
+    parentElement->channelHeatFlux += channelHeatFlux * wettedWidth /(parentElement->channelWidth);
+  }
 }
 
 void ElementCell::computeChannelSoluteFlux(int soluteIndex)
 {
   channelSoluteFlux[soluteIndex] = 0.0;
 
-  if(channelInflow >= 0.0)
+  if(wettedWidth)
   {
-    channelSoluteFlux[soluteIndex] = channelInflow * parentElement->channelSoluteConcs[soluteIndex];
-  }
-  else
-  {
-    channelSoluteFlux[soluteIndex] = channelInflow * soluteConcs[soluteIndex].value;
-  }
 
-  parentElement->channelSoluteFlux[soluteIndex] += channelSoluteFlux[soluteIndex];
+    if(channelInflow >= 0.0)
+    {
+      channelSoluteFlux[soluteIndex] = channelInflow * parentElement->channelSoluteConcs[soluteIndex];
+    }
+    else
+    {
+      channelSoluteFlux[soluteIndex] = channelInflow * soluteConcs[soluteIndex].value;
+    }
 
+//    double disp = (dispersivity[0] + dispersivity[1]) * fabs(channelInflow) / ( wettedWidth * parentElement->length * porosity * 2.0);
+//    disp += parentElement->model->m_solute_molecular_diff[soluteIndex];
+//    channelSoluteFlux[soluteIndex] += disp * wettedWidth * parentElement->length * (parentElement->channelSoluteConcs[soluteIndex] - soluteConcs[soluteIndex].value) /( depth / 2);
+
+    parentElement->channelSoluteRate[soluteIndex] += channelSoluteFlux[soluteIndex];
+
+    channelSoluteFlux[soluteIndex] /= (wettedWidth * parentElement->length);
+
+    parentElement->channelSoluteFlux[soluteIndex] += channelSoluteFlux[soluteIndex] * wettedWidth /(parentElement->channelWidth);
+  }
 }
 
 double ElementCell::computeEdgeHydHeadHeadBC(int edgeIndex, double dt, double H[])

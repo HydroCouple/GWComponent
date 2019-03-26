@@ -213,6 +213,11 @@ struct ElementCell
     double width;
 
     /*!
+     * \brief wettedWidth
+     */
+    double wettedWidth;
+
+    /*!
      * \brief specificStorage
      */
     double specificStorage;
@@ -303,16 +308,6 @@ struct ElementCell
     double dvolume_dt;
 
     /*!
-     * \brief qX
-     */
-    double qX;
-
-    /*!
-     * \brief qY
-     */
-    double qY;
-
-    /*!
      * \brief start
      */
     bool start;
@@ -322,6 +317,9 @@ struct ElementCell
      */
     Element *parentElement;
 
+    /*!
+     * \brief neighbors
+     */
     ElementCell **neighbors;
 
 
@@ -847,9 +845,19 @@ struct GWCOMPONENT_EXPORT Element
    double channelInflowFlux;
 
    /*!
+    * \brief channelHeat
+    */
+   double channelHeatRate;
+
+   /*!
     * \brief channelHeatFlux
     */
    double channelHeatFlux;
+
+   /*!
+    * \brief channelSoluteRate
+    */
+   double *channelSoluteRate;
 
    /*!
     * \brief channelSoluteFlux

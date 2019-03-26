@@ -107,7 +107,7 @@ void ElementOutput::updateValues()
         for(int i = 0 ; i < (int)m_geometries.size() ; i++)
         {
           Element *element = m_component->modelInstance()->getElement(i);
-          double value = -element->channelHeatFlux;
+          double value = -element->channelHeatRate;
           setValue(currentTimeIndex,i,&value);
         }
       }
@@ -117,7 +117,7 @@ void ElementOutput::updateValues()
         for(int i = 0 ; i < (int)m_geometries.size() ; i++)
         {
           Element *element = m_component->modelInstance()->getElement(i);
-          double value = -element->channelSoluteFlux[m_soluteIndex];
+          double value = -element->channelSoluteRate[m_soluteIndex];
           setValue(currentTimeIndex,i,&value);
         }
       }

@@ -27,6 +27,7 @@ Element::Element(const std::string &id, ElementJunction *upstream, ElementJuncti
     upstreamJunction(upstream),
     downstreamJunction(downstream),
     channelSoluteConcs(nullptr),
+    channelSoluteRate(nullptr),
     channelSoluteFlux(nullptr),
     model(model)
 {
@@ -56,6 +57,7 @@ Element::~Element()
   if(channelSoluteConcs != nullptr)
   {
     delete[] channelSoluteConcs;
+    delete[] channelSoluteRate;
     delete[] channelSoluteFlux;
   }
 
@@ -71,6 +73,7 @@ void Element::initialize()
   setDownStreamElement();
 
   channelInflow = 0.0;
+  channelHeatRate = 0.0;
   channelHeatFlux = 0.0;
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)
@@ -99,12 +102,14 @@ void Element::initializeSolutes()
   {
     delete[] channelSoluteConcs; channelSoluteConcs = nullptr;
     delete[] channelSoluteFlux; channelSoluteFlux = nullptr;
+    delete[] channelSoluteRate; channelSoluteRate = nullptr;
   }
 
   if(model->m_solutes.size() > 0)
   {
     channelSoluteConcs = new double[model->m_solutes.size()]();
     channelSoluteFlux = new double[model->m_solutes.size()]();
+    channelSoluteRate = new double[model->m_solutes.size()]();
   }
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)

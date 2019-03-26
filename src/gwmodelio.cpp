@@ -280,16 +280,16 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     m_outNetCDFVariables["time"] = timeVar;
 
     //Add Solutes
-    ThreadSafeNcDim solutesDim =  m_outputNetCDF->addDim("solutes", m_solutes.size());
+    ThreadSafeNcDim solutesDim =  m_outputNetCDF->addDim("solutes",m_numSolutes);
     ThreadSafeNcVar solutes =  m_outputNetCDF->addVar("solute_names", NcType::nc_STRING, solutesDim);
     solutes.putAtt("long_name", "Solutes");
     m_outNetCDFVariables["solutes"] = solutes;
 
-    if (m_solutes.size())
+    if(m_numSolutes > 0)
     {
-      char **soluteNames = new char *[m_solutes.size()];
+      char **soluteNames = new char *[m_numSolutes];
 
-      for (size_t i = 0; i < m_solutes.size(); i++)
+      for (int i = 0; i < m_numSolutes; i++)
       {
         string soluteName = m_solutes[i];
         soluteNames[i] = new char[soluteName.size() + 1];
@@ -298,7 +298,7 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 
       solutes.putVar(soluteNames);
 
-      for (size_t i = 0; i < m_solutes.size(); i++)
+      for (int i = 0; i < m_numSolutes; i++)
       {
         delete[] soluteNames[i];
       }
@@ -312,6 +312,7 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcVar junctionIdentifiers =  m_outputNetCDF->addVar("element_junction_id", NcType::nc_STRING, junctionDim);
     junctionIdentifiers.putAtt("long_name", "Element Junction Identifiers");
     m_outNetCDFVariables["element_junction_id"] = junctionIdentifiers;
+
 
     ThreadSafeNcVar junctionX =  m_outputNetCDF->addVar("x", NcType::nc_FLOAT, junctionDim);
     junctionX.putAtt("long_name", "Junction X Coordinate");
@@ -483,7 +484,7 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 
 
     ThreadSafeNcVar dVolumeDtVar =  m_outputNetCDF->addVar("dvolume_dt", "float",
-                                                         std::vector<std::string>({"time", "elements", "element_cells"}));
+                                                           std::vector<std::string>({"time", "elements", "element_cells"}));
     dVolumeDtVar.putAtt("long_name", "Volume Time Derivative");
     dVolumeDtVar.putAtt("units", "m");
     m_outNetCDFVariables["dvolume_dt"] = dVolumeDtVar;
@@ -521,11 +522,11 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     elementChannelInflowVar.putAtt("units", "m^3/s");
     m_outNetCDFVariables["element_channel_inflow"] = elementChannelInflowVar;
 
-    ThreadSafeNcVar elementChannelInflowFluxVar =  m_outputNetCDF->addVar("element_channel_inflow_flux", "float",
+    ThreadSafeNcVar elementChannelInflowFluxVar =  m_outputNetCDF->addVar("element_channel_flux", "float",
                                                                           std::vector<std::string>({"time", "elements"}));
     elementChannelInflowFluxVar.putAtt("long_name", "Element Channel Inflow Flux");
     elementChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
-    m_outNetCDFVariables["element_channel_inflow_flux"] = elementChannelInflowFluxVar;
+    m_outNetCDFVariables["element_channel_flux"] = elementChannelInflowFluxVar;
 
 
     ThreadSafeNcVar elementCellChannelInflowVar =  m_outputNetCDF->addVar("element_cell_channel_inflow", "float",
@@ -535,39 +536,44 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     m_outNetCDFVariables["element_cell_channel_inflow"] = elementCellChannelInflowVar;
 
 
-    ThreadSafeNcVar elementCellChannelInflowFluxVar =  m_outputNetCDF->addVar("element_cell_channel_inflow_flux", "float",
+    ThreadSafeNcVar elementCellChannelInflowFluxVar =  m_outputNetCDF->addVar("element_cell_channel_flux", "float",
                                                                               std::vector<std::string>({"time", "elements","element_cells"}));
     elementCellChannelInflowFluxVar.putAtt("long_name", "Element Cell Channel Inflow Flux");
     elementCellChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
-    m_outNetCDFVariables["element_cell_channel_inflow_flux"] = elementCellChannelInflowFluxVar;
+    m_outNetCDFVariables["element_cell_channel_flux"] = elementCellChannelInflowFluxVar;
 
 
     ThreadSafeNcVar elementCellFaceFlowVar =  m_outputNetCDF->addVar("element_cell_face_flow", "float",
                                                                      std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
     elementCellFaceFlowVar.putAtt("long_name", "Element Cell Face Flow");
-    elementCellFaceFlowVar.putAtt("units", "m^3");
+    elementCellFaceFlowVar.putAtt("units", "m^3/s");
     m_outNetCDFVariables["element_cell_face_flow"] = elementCellFaceFlowVar;
 
+    //    ThreadSafeNcVar elementCellFaceFluxVar =  m_outputNetCDF->addVar("element_cell_face_flux", "float",
+    //                                                                     std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
+    //    elementCellFaceFluxVar.putAtt("long_name", "Element Cell Face Flux");
+    //    elementCellFaceFluxVar.putAtt("units", "m^3/m^2/s");
+    //    m_outNetCDFVariables["element_cell_face_flux"] = elementCellFaceFluxVar;
 
-    ThreadSafeNcVar elementCellFaceSupVelVar =  m_outputNetCDF->addVar("element_cell_face_sup_velocity", "float",
-                                                                       std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
-    elementCellFaceSupVelVar.putAtt("long_name", "Element Cell Face Superficial Velocity");
-    elementCellFaceSupVelVar.putAtt("units", "m/s");
-    m_outNetCDFVariables["element_cell_face_sup_velocity"] = elementCellFaceSupVelVar;
-
-
-    ThreadSafeNcVar elementCellSupVelXVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_x", "float",
-                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellSupVelXVar.putAtt("long_name", "Element Cell Superficial X Velocity");
-    elementCellSupVelXVar.putAtt("units", "m/s");
-    m_outNetCDFVariables["element_cell_sup_velocity_x"] = elementCellSupVelXVar;
+    //    ThreadSafeNcVar elementCellFaceSupVelVar =  m_outputNetCDF->addVar("element_cell_face_sup_velocity", "float",
+    //                                                                       std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
+    //    elementCellFaceSupVelVar.putAtt("long_name", "Element Cell Face Superficial Velocity");
+    //    elementCellFaceSupVelVar.putAtt("units", "m/s");
+    //    m_outNetCDFVariables["element_cell_face_sup_velocity"] = elementCellFaceSupVelVar;
 
 
-    ThreadSafeNcVar elementCellSupVelYVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_y", "float",
-                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellSupVelYVar.putAtt("long_name", "Element Cell Superficial Y Velocity");
-    elementCellSupVelYVar.putAtt("units", "m/s");
-    m_outNetCDFVariables["element_cell_sup_velocity_y"] = elementCellSupVelYVar;
+    //    ThreadSafeNcVar elementCellSupVelXVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_x", "float",
+    //                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
+    //    elementCellSupVelXVar.putAtt("long_name", "Element Cell Superficial X Velocity");
+    //    elementCellSupVelXVar.putAtt("units", "m/s");
+    //    m_outNetCDFVariables["element_cell_sup_velocity_x"] = elementCellSupVelXVar;
+
+
+    //    ThreadSafeNcVar elementCellSupVelYVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_y", "float",
+    //                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
+    //    elementCellSupVelYVar.putAtt("long_name", "Element Cell Superficial Y Velocity");
+    //    elementCellSupVelYVar.putAtt("units", "m/s");
+    //    m_outNetCDFVariables["element_cell_sup_velocity_y"] = elementCellSupVelYVar;
 
 
     ThreadSafeNcVar totalMassBalanceVar =  m_outputNetCDF->addVar("total_mass_balance", "float",
@@ -606,14 +612,14 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcVar elementChannelHeatFluxVar =  m_outputNetCDF->addVar("element_channel_heat_flux", "float",
                                                                         std::vector<std::string>({"time", "elements"}));
     elementChannelHeatFluxVar.putAtt("long_name", "Element Channel Heat Flux");
-    elementChannelHeatFluxVar.putAtt("units", "J/s");
+    elementChannelHeatFluxVar.putAtt("units", "J/s/m^2");
     m_outNetCDFVariables["element_channel_heat_flux"] = elementChannelHeatFluxVar;
 
 
     ThreadSafeNcVar elementCellChannelHeatFluxVar =  m_outputNetCDF->addVar("element_cell_channel_heat_flux", "float",
                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
     elementCellChannelHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
-    elementCellChannelHeatFluxVar.putAtt("units", "J/s");
+    elementCellChannelHeatFluxVar.putAtt("units", "J/s/m^2");
     m_outNetCDFVariables["element_cell_channel_heat_flux"] = elementCellChannelHeatFluxVar;
 
 
@@ -637,10 +643,16 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     solutesVar.putAtt("units", "kg/m^3");
     m_outNetCDFVariables["solute_concentration"] = solutesVar;
 
+    ThreadSafeNcVar elementCellChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_cell_channel_solute_flux", "float",
+                                                                              std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
+    elementCellChannelSoluteFluxVar.putAtt("long_name", "Cell Channel Solute Flux");
+    elementCellChannelSoluteFluxVar.putAtt("units", "kg/s/m^2");
+    m_outNetCDFVariables["element_cell_channel_solute_flux"] = elementCellChannelSoluteFluxVar;
+
     ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
                                                                           std::vector<std::string>({"time", "solutes", "elements"}));
     elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
-    elementChannelSoluteFluxVar.putAtt("units", "kg/s");
+    elementChannelSoluteFluxVar.putAtt("units", "kg/s/m^2");
     m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
 
     m_outputNetCDF->sync();
@@ -1658,8 +1670,6 @@ bool GWModel::readInputFileSolutesTag(const QString &line, QString &errorMessage
         errorMessage = "Invalid solute molecular diffision";
         return false;
       }
-
-
 
       m_addedSoluteCount++;
     }
@@ -2965,9 +2975,10 @@ void GWModel::writeNetCDFOutput()
     float *elementCellChannelInflowFlux = new float[m_elements.size() * m_totalCellsPerElement];
     float *totalElementCellMassBal = new float[m_elements.size() * m_totalCellsPerElement];
     float *edgeFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
-    float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *edgeFlux = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
     float *temperature = new float[m_elements.size() * m_totalCellsPerElement];
     float *waterAge = new float[m_elements.size() * m_totalCellsPerElement];
     float *elementHeatFlux = new float[m_elements.size()];
@@ -2977,8 +2988,10 @@ void GWModel::writeNetCDFOutput()
     float *elementChannelWSE = new float[m_elements.size()];
     float *elementChannelWidth = new float[m_elements.size()];
     float *solutes = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement];
+    float *cellChannelSoluteFlux = new float[m_elements.size() * m_totalCellsPerElement * m_numSolutes];
     float *channelSoluteFlux = new float[m_elements.size() * m_numSolutes];
 
+    //element_cell_face_flux
 
 #ifdef USE_OPENMP
 #pragma omp parallel for
@@ -3012,21 +3025,23 @@ void GWModel::writeNetCDFOutput()
         for(int k = 0; k < 4; k++)
         {
           edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
-          edgeSupVel[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeGradHydHead[k].value * elementCell->edgeHydCons[k] * dir[k];
+          //          edgeFlux[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k] / (element->length * elementCell->edgeDepths[k]);
+          //          edgeSupVel[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeGradHydHead[k].value * elementCell->edgeHydCons[k] * dir[k];
         }
 
-        double vy =  (elementCell->edgeGradHydHead[0].value * elementCell->edgeHydCons[0] * dir[0] +
-                     elementCell->edgeGradHydHead[2].value * elementCell->edgeHydCons[2] * dir[2]) / 2.0;
+        //        double vy =  (elementCell->edgeGradHydHead[0].value * elementCell->edgeHydCons[0] * dir[0] +
+        //                     elementCell->edgeGradHydHead[2].value * elementCell->edgeHydCons[2] * dir[2]) / 2.0;
 
-        double vx =  (elementCell->edgeGradHydHead[1].value * elementCell->edgeHydCons[1] * dir[1] +
-                     elementCell->edgeGradHydHead[3].value * elementCell->edgeHydCons[3] * dir[3]) / 2.0;
+        //        double vx =  (elementCell->edgeGradHydHead[1].value * elementCell->edgeHydCons[1] * dir[1] +
+        //                     elementCell->edgeGradHydHead[3].value * elementCell->edgeHydCons[3] * dir[3]) / 2.0;
 
-        cellSupVelX[j + i * m_totalCellsPerElement] = vx;
-        cellSupVelY[j + i * m_totalCellsPerElement] = vy;
+        //        cellSupVelX[j + i * m_totalCellsPerElement] = vx;
+        //        cellSupVelY[j + i * m_totalCellsPerElement] = vy;
 
         for (int k = 0; k < m_numSolutes; k++)
         {
           solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
+          cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteFlux[k];
         }
       }
 
@@ -3049,11 +3064,11 @@ void GWModel::writeNetCDFOutput()
 
     m_outNetCDFVariables["element_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflow);
 
-    m_outNetCDFVariables["element_channel_inflow_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflowFlux);
+    m_outNetCDFVariables["element_channel_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflowFlux);
 
     m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflow);
 
-    m_outNetCDFVariables["element_cell_channel_inflow_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflowFlux);
+    m_outNetCDFVariables["element_cell_channel_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflowFlux);
 
     m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), totalElementCellMassBal);
 
@@ -3061,11 +3076,13 @@ void GWModel::writeNetCDFOutput()
 
     m_outNetCDFVariables["element_cell_face_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeFlow);
 
-    m_outNetCDFVariables["element_cell_face_sup_velocity"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeSupVel);
+    //    m_outNetCDFVariables["element_cell_face_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeFlux);
 
-    m_outNetCDFVariables["element_cell_sup_velocity_x"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelX);
+    //    m_outNetCDFVariables["element_cell_face_sup_velocity"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeSupVel);
 
-    m_outNetCDFVariables["element_cell_sup_velocity_y"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelY);
+    //    m_outNetCDFVariables["element_cell_sup_velocity_x"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelX);
+
+    //    m_outNetCDFVariables["element_cell_sup_velocity_y"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), cellSupVelY);
 
     m_outNetCDFVariables["temperature"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), temperature);
 
@@ -3085,6 +3102,8 @@ void GWModel::writeNetCDFOutput()
     if(m_numSolutes)
     {
       m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement}), solutes);
+
+      m_outNetCDFVariables["element_cell_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement}), cellChannelSoluteFlux);
 
       m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size()}), channelSoluteFlux);
     }
@@ -3126,9 +3145,10 @@ void GWModel::writeNetCDFOutput()
     delete[] elementCellChannelInflowFlux;
     delete[] totalElementCellMassBal;
     delete[] edgeFlow;
-    delete[] edgeSupVel;
-    delete[] cellSupVelX;
-    delete[] cellSupVelY;
+    //    delete[] edgeFlux;
+    //    delete[] edgeSupVel;
+    //    delete[] cellSupVelX;
+    //    delete[] cellSupVelY;
     delete[] temperature;
     delete[] waterAge;
     delete[] elementHeatFlux;
@@ -3138,6 +3158,7 @@ void GWModel::writeNetCDFOutput()
     delete[] elementChannelWSE;
     delete[] elementChannelWidth;
     delete[] solutes;
+    delete[] cellChannelSoluteFlux;
     delete[] channelSoluteFlux;
   }
 

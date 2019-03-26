@@ -551,6 +551,8 @@ bool GWModel::initializeElements(std::list<string> &errors)
     elementJunction->index = i;
   }
 
+  int bfsIndex = 0;
+
   for(int i = 0 ; i < (int)m_elements.size(); i++)
   {
     Element *element = m_elements[i];
@@ -560,7 +562,8 @@ bool GWModel::initializeElements(std::list<string> &errors)
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
-      elementCell->index  = -1;// i * m_totalCellsPerElement + j;
+      elementCell->index  = bfsIndex;// i * m_totalCellsPerElement + j;
+      bfsIndex++;
     }
 
     for(int f = m_numLeftCellsPerElement - 1; f > -1; f--)
@@ -586,12 +589,9 @@ bool GWModel::initializeElements(std::list<string> &errors)
     element->initialize();
   }
 
-  int bfsIndex = 0;
-
-  ElementCell *startCell = m_elements[0]->elementCells[0];
-  startCell->index = bfsIndex;
-
-  breadthFirstSearchSetIndex(startCell, bfsIndex);
+  //  ElementCell *startCell = m_elements[0]->elementCells[0];
+  //  startCell->index = bfsIndex;
+  //  breadthFirstSearchSetIndex(startCell, bfsIndex);
 
   return true;
 }
@@ -686,31 +686,28 @@ void GWModel::calculateDistanceFromUpstreamJunction(Element *element)
 
 void GWModel::breadthFirstSearchSetIndex(ElementCell *cell, int &bfsIndex)
 {
-  int *marked = new int[4]();
+  //  cell->index = bfsIndex;
 
-  for(int i = 0; i < 4; i++)
-  {
-    ElementCell *n = cell->neighbors[i];
+  //  for(int i = 0; i < 4; i++)
+  //  {
+  //    ElementCell *n = cell->neighbors[i];
 
-    if(n && n->index == -1)
-    {
-      bfsIndex++;
-      n->index = bfsIndex;
-      marked[i] = 1;
-    }
-  }
+  //    if(n != nullptr && n->index == -1)
+  //    {
+  //      bfsIndex++;
+  //      n->index = bfsIndex;
+  //    }
+  //  }
 
-  for(int i = 0; i < 4; i++)
-  {
-    ElementCell *n = cell->neighbors[i];
+  //  for(int i = 0; i < 4; i++)
+  //  {
+  //    ElementCell *n = cell->neighbors[i];
 
-    if(n && marked[i])
-    {
-      breadthFirstSearchSetIndex(n, bfsIndex);
-    }
-  }
-
-  delete[] marked;
+  //    if(n != nullptr && n->index > -1)
+  //    {
+  //      breadthFirstSearchSetIndex(n, bfsIndex);
+  //    }
+  //  }
 }
 
 

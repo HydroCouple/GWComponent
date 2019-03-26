@@ -276,6 +276,7 @@ void GWModel::calculatePreComputedTempVariables()
   {
     Element *element = m_elements[i];
     element->channelHeatFlux = 0.0;
+    element->channelHeatRate = 0.0;
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
@@ -297,6 +298,7 @@ void GWModel::calculatePreComputedSoluteVariables()
     for(size_t j = 0; j < m_solutes.size(); j++)
     {
       element->channelSoluteFlux[j] = 0.0;
+      element->channelSoluteRate[j] = 0.0;
     }
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
