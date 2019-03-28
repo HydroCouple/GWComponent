@@ -32,6 +32,8 @@ typedef double (ElementCell::*ComputeEdgeVariableDeriv)(int edgeIndex, double dt
 struct ElementCell
 {
 
+    friend struct Element;
+
     /*!
      * \brief ElementCell
      * \param cindex
@@ -123,6 +125,11 @@ struct ElementCell
     double channelHeatFlux;
 
     /*!
+     * \brief channelHeatRate
+     */
+    double channelHeatRate;
+
+    /*!
      * \brief totalHeatBalance
      */
     double totalHeatBalance;
@@ -166,6 +173,11 @@ struct ElementCell
      * \brief channelSoluteFlux
      */
     double *channelSoluteFlux;
+
+    /*!
+     * \brief channelSoluteRate
+     */
+    double *channelSoluteRate;
 
     /*!
      * \brief totalSoluteMassBalance
@@ -228,6 +240,11 @@ struct ElementCell
     double *dispersivity;
 
     /*!
+     * \brief dispersivityZ
+     */
+    double dispersivityZ;
+
+    /*!
      * \brief sedThermalConductivity
      */
     double sedThermalConductivity;
@@ -268,6 +285,11 @@ struct ElementCell
     double *edgeEffectiveKe;
 
     /*!
+     * \brief effectiveKeZ
+     */
+    double effectiveKeZ;
+
+    /*!
      * \brief edgePorosity
      */
     double *edgePorosity;
@@ -276,6 +298,11 @@ struct ElementCell
      * \brief edgeHeatDispersionCoeff
      */
     double *edgeMechDispersionCoeff;
+
+    /*!
+     * \brief mechDispersionCoeffZ
+     */
+    double mechDispersionCoeffZ;
 
     /*!
      * \brief edgeHeatPecletNumbers
@@ -551,27 +578,6 @@ struct ElementCell
          */
     void computeChannelSoluteFlux(int soluteIndex);
 
-    //    /*!
-    //     * \brief computeChannelMassFlux
-    //     * \param dt
-    //     * \param T
-    //     */
-    //    void computeChannelMassFlux(double dt, double H[]);
-
-    //    /*!
-    //     * \brief computeChannelHeatFlux
-    //     * \param dt
-    //     * \param T
-    //     */
-    //    void computeChannelHeatFlux(double dt, double T[]);
-
-    //    /*!
-    //     * \brief computeChannelSoluteFlux
-    //     * \param dt
-    //     * \param S
-    //     * \param soluteIndex
-    //     */
-    //    void computeChannelSoluteFlux(double dt, double S[], int soluteIndex);
 
     /*!
      * \brief computeHydHeadEdgeHeadBC
@@ -734,6 +740,8 @@ struct ElementCell
  */
 struct GWCOMPONENT_EXPORT Element
 {
+    friend struct ElementCell;
+
     /*!
     * \brief Element - Creates an instance of the control volume element used to represent a computational
     * element in a reach.
@@ -883,6 +891,22 @@ struct GWCOMPONENT_EXPORT Element
     * \brief initializeElementCells
     */
    void initializeElementCells();
+
+   /*!
+    * \brief computeChannelMassFlux
+    */
+   void computeChannelMassFlux();
+
+   /*!
+    * \brief computeChannelHeatFlux
+    */
+   void computeChannelHeatFlux();
+
+   /*!
+    * \brief computeChannelSoluteFlux
+    * \param soluteIndex
+    */
+   void computeChannelSoluteFlux(int soluteIndex);
 
 
   private:

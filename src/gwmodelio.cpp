@@ -612,14 +612,14 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcVar elementChannelHeatFluxVar =  m_outputNetCDF->addVar("element_channel_heat_flux", "float",
                                                                         std::vector<std::string>({"time", "elements"}));
     elementChannelHeatFluxVar.putAtt("long_name", "Element Channel Heat Flux");
-    elementChannelHeatFluxVar.putAtt("units", "J/s/m^2");
+    elementChannelHeatFluxVar.putAtt("units", "J/s");
     m_outNetCDFVariables["element_channel_heat_flux"] = elementChannelHeatFluxVar;
 
 
     ThreadSafeNcVar elementCellChannelHeatFluxVar =  m_outputNetCDF->addVar("element_cell_channel_heat_flux", "float",
                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
     elementCellChannelHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
-    elementCellChannelHeatFluxVar.putAtt("units", "J/s/m^2");
+    elementCellChannelHeatFluxVar.putAtt("units", "J/s");
     m_outNetCDFVariables["element_cell_channel_heat_flux"] = elementCellChannelHeatFluxVar;
 
 
@@ -646,13 +646,13 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcVar elementCellChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_cell_channel_solute_flux", "float",
                                                                               std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
     elementCellChannelSoluteFluxVar.putAtt("long_name", "Cell Channel Solute Flux");
-    elementCellChannelSoluteFluxVar.putAtt("units", "kg/s/m^2");
+    elementCellChannelSoluteFluxVar.putAtt("units", "kg/s");
     m_outNetCDFVariables["element_cell_channel_solute_flux"] = elementCellChannelSoluteFluxVar;
 
     ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
                                                                           std::vector<std::string>({"time", "solutes", "elements"}));
     elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
-    elementChannelSoluteFluxVar.putAtt("units", "kg/s/m^2");
+    elementChannelSoluteFluxVar.putAtt("units", "kg/s");
     m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
 
     m_outputNetCDF->sync();
@@ -1829,7 +1829,7 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
           }
         }
 
-        if((int)columns.size() == currentColumn - 1 + (int)m_solutes.size() * 2)
+        if(columns.size() - currentColumn >= m_numSolutes * 2)
         {
           int soluteIndex = 0;
 
@@ -3020,34 +3020,23 @@ void GWModel::writeNetCDFOutput()
         temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
         elementHeatFlux[i] += elementCell->externalHeatFluxes;
         elementCellHeatFlux[j + i * m_totalCellsPerElement] = elementCell->externalHeatFluxes;
-        elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatFlux;
+        elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatRate;
 
         for(int k = 0; k < 4; k++)
         {
           edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
-          //          edgeFlux[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k] / (element->length * elementCell->edgeDepths[k]);
-          //          edgeSupVel[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeGradHydHead[k].value * elementCell->edgeHydCons[k] * dir[k];
         }
-
-        //        double vy =  (elementCell->edgeGradHydHead[0].value * elementCell->edgeHydCons[0] * dir[0] +
-        //                     elementCell->edgeGradHydHead[2].value * elementCell->edgeHydCons[2] * dir[2]) / 2.0;
-
-        //        double vx =  (elementCell->edgeGradHydHead[1].value * elementCell->edgeHydCons[1] * dir[1] +
-        //                     elementCell->edgeGradHydHead[3].value * elementCell->edgeHydCons[3] * dir[3]) / 2.0;
-
-        //        cellSupVelX[j + i * m_totalCellsPerElement] = vx;
-        //        cellSupVelY[j + i * m_totalCellsPerElement] = vy;
 
         for (int k = 0; k < m_numSolutes; k++)
         {
           solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
-          cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteFlux[k];
+          cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteRate[k];
         }
       }
 
       for (int k = 0; k < m_numSolutes; k++)
       {
-        channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteFlux[k];
+        channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteRate[k];
       }
     }
 

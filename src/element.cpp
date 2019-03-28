@@ -96,6 +96,51 @@ void Element::initializeElementCells()
   }
 }
 
+void Element::computeChannelMassFlux()
+{
+  channelInflow = 0;
+
+  for(int j = 0; j < model->m_totalCellsPerElement; j++)
+  {
+    ElementCell *elementCell = elementCells[j];
+    elementCell->computeChannelMassFlux();
+    channelInflow += elementCell->channelInflow;
+  }
+
+  channelInflowFlux = channelInflow / (channelWidth * length);
+}
+
+void Element::computeChannelHeatFlux()
+{
+  channelHeatFlux = 0;
+  channelHeatRate = 0;
+
+  for(int j = 0; j < model->m_totalCellsPerElement; j++)
+  {
+    ElementCell *elementCell = elementCells[j];
+    elementCell->computeChannelMassFlux();
+    channelHeatRate += elementCell->channelHeatRate;
+  }
+
+  channelHeatFlux = channelHeatRate / (channelWidth * length);
+}
+
+void Element::computeChannelSoluteFlux(int soluteIndex)
+{
+  channelSoluteRate[soluteIndex] = 0.0;
+  channelSoluteFlux[soluteIndex] = 0.0;
+
+  for(int j = 0; j < model->m_totalCellsPerElement; j++)
+  {
+    ElementCell *elementCell = elementCells[j];
+    elementCell->computeChannelSoluteFlux(soluteIndex);
+    channelSoluteRate[soluteIndex] += elementCell->channelSoluteRate[soluteIndex];
+  }
+
+  channelSoluteFlux[soluteIndex] = channelSoluteRate[soluteIndex] / (channelWidth * length);
+
+}
+
 void Element::initializeSolutes()
 {
   if(channelSoluteConcs)

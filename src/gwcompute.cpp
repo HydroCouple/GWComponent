@@ -256,14 +256,14 @@ void GWModel::calculatePreComputedHydHeadVariables()
   for(int i = 0 ; i < (int)m_elements.size()  ; i++)
   {
     Element *element = m_elements[i];
-    element->channelInflow = 0.0;
-    element->channelInflowFlux = 0.0;
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
       elementCell->calculatePreComputedHydHeadVariables();
     }
+
+    element->computeChannelMassFlux();
   }
 }
 
@@ -275,14 +275,14 @@ void GWModel::calculatePreComputedTempVariables()
   for(int i = 0 ; i < (int)m_elements.size()  ; i++)
   {
     Element *element = m_elements[i];
-    element->channelHeatFlux = 0.0;
-    element->channelHeatRate = 0.0;
 
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
       elementCell->calculatePreComputedTempVariables();
     }
+
+    element->computeChannelHeatFlux();
   }
 }
 
@@ -295,16 +295,15 @@ void GWModel::calculatePreComputedSoluteVariables()
   {
     Element *element = m_elements[i];
 
-    for(size_t j = 0; j < m_solutes.size(); j++)
-    {
-      element->channelSoluteFlux[j] = 0.0;
-      element->channelSoluteRate[j] = 0.0;
-    }
-
     for(int j = 0; j < m_totalCellsPerElement; j++)
     {
       ElementCell *elementCell = element->elementCells[j];
       elementCell->calculatePreComputedSoluteVariables();
+    }
+
+    for(size_t j = 0; j < m_solutes.size(); j++)
+    {
+      element->computeChannelSoluteFlux(j);
     }
   }
 }
