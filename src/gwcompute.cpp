@@ -19,8 +19,19 @@ void GWModel::update()
     m_timeStep = computeTimeStep();
 
     calculatePreComputedHydHeadVariables();
-    calculatePreComputedTempVariables();
-    calculatePreComputedSoluteVariables();
+
+#pragma omp parallel sections
+    {
+#pragma omp section
+      {
+        calculatePreComputedTempVariables();
+      }
+
+#pragma omp section
+      {
+        calculatePreComputedSoluteVariables();
+      }
+    }
 
     solve(m_timeStep);
 

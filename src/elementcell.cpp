@@ -57,6 +57,7 @@ ElementCell::ElementCell(int cindex, Element *cparent)
   dispersivity = new double[2]();
   dispersivity[0] = parentElement->model->m_dispersivityY;
   dispersivity[1] = parentElement->model->m_dispersivityX;
+  dispersivityZ = parentElement->model->m_dispersivityZ;
   sedThermalConductivity = parentElement->model->m_sedThermalConductivity;
 
   edgeHydHead = new Variable[4];
@@ -68,6 +69,7 @@ ElementCell::ElementCell(int cindex, Element *cparent)
   edgeSolutePecletNumbers = new double[4]();
   edgeTemperatures = new Variable[4];
   edgeGradTemperatures = new Variable[4];
+  edgeHeatFluxes = new double[4]();
   neighbors = new ElementCell*[4];
   computeEdgeHeadDerivs = new ComputeEdgeDeriv[4];
   computeEdgeTempDerivs = new ComputeEdgeDeriv[4];
@@ -86,6 +88,7 @@ ElementCell::~ElementCell()
   delete[] edgeHydCons;
   delete[] edgeTemperatures;
   delete[] edgeGradTemperatures;
+  delete[] edgeHeatFluxes;
   delete[] edgeMechDispersionCoeff;
   delete[] edgeSolutePecletNumbers;
   delete[] neighbors;
@@ -214,11 +217,13 @@ void ElementCell::initializeSolutes()
 
     edgeSoluteConcs = new Variable*[numSolutes];
     edgeGradSoluteConcs = new Variable*[numSolutes];
+    edgeSoluteConcFluxes = new double*[numSolutes];
     retardationFactor = new double[numSolutes]();
 
     for(int i = 0; i < numSolutes; i++)
     {
       edgeSoluteConcs[i] = new Variable[4];
+      edgeSoluteConcFluxes[i] = new double[4]();
       edgeGradSoluteConcs[i] = new Variable[4];
       computeEdgeSoluteDerivs[i] = new ComputeEdgeVariableDeriv[4];
 
@@ -290,25 +295,36 @@ double ElementCell::computeDTDtDispersion(double dt, double T[])
 double ElementCell::computeDTDtUpwind(double dt, double T[])
 {
   double DTDt = 0.0;
+  double heat = 0.0;
 
   for(int i = 0; i < 4; i++)
   {
     double flow = edgeFlows[i];
+    edgeHeatFluxes[i] = 0.0;
 
     if(flow >= 0.0)
     {
       if(edgeTemperatures[i].isBC)
       {
-        DTDt += parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * edgeTemperatures[i].value;
+        heat = parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * edgeTemperatures[i].value;
+        DTDt += heat;
+
+        edgeHeatFluxes[i] = heat;
       }
       else if(neighbors[i])
       {
-        DTDt += parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * T[neighbors[i]->index];
+        heat = parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * T[neighbors[i]->index];
+        DTDt += heat;
+
+        edgeHeatFluxes[i] = heat;
       }
     }
     else
     {
-      DTDt +=  parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * T[index];
+      heat =  parentElement->model->m_waterDensity * parentElement->model->m_cp * flow * T[index];
+      DTDt +=heat;
+
+      edgeHeatFluxes[i] = heat;
     }
   }
 
@@ -320,15 +336,21 @@ double ElementCell::computeDTDtUpwind(double dt, double T[])
 double ElementCell::computeDTDtCentral(double dt, double T[])
 {
   double DTDt = 0.0;
+  double heat = 0.0;
 
   for(int i = 0; i < 4; i++)
   {
     double edgeFlow = edgeFlows[i];
+    edgeHeatFluxes[i] = 0.0;
 
     if(edgeTemperatures[i].isBC)
     {
-      DTDt +=  parentElement->model->m_waterDensity * parentElement->model->m_cp *
-               edgeFlow * edgeTemperatures[i].value;
+      heat =  parentElement->model->m_waterDensity * parentElement->model->m_cp *
+              edgeFlow * edgeTemperatures[i].value;
+
+      DTDt += heat;
+
+      edgeHeatFluxes[i] = heat;
     }
     else if(neighbors[i])
     {
@@ -337,11 +359,19 @@ double ElementCell::computeDTDtCentral(double dt, double T[])
 
       double edgeT = (T[index] / flp   +  T[neighbors[i]->index] / fln) / (1.0 / flp + 1.0 / fln);
 
-      DTDt += parentElement->model->m_waterDensity * parentElement->model->m_cp * edgeFlow * edgeT;
+      heat = parentElement->model->m_waterDensity * parentElement->model->m_cp * edgeFlow * edgeT;
+
+      DTDt += heat;
+
+      edgeHeatFluxes[i] = heat;
     }
     else if(edgeFlow < 0)
     {
-      DTDt +=  parentElement->model->m_waterDensity * parentElement->model->m_cp * edgeFlow * T[index];
+      heat =  parentElement->model->m_waterDensity * parentElement->model->m_cp * edgeFlow * T[index];
+
+      DTDt += heat;
+
+      edgeHeatFluxes[i] = heat;
     }
   }
 
@@ -442,25 +472,37 @@ double ElementCell::computeDSoluteDtDispersion(double dt, double S[], int solute
 double ElementCell::computeDSoluteDtUpwind(double dt, double S[], int soluteIndex)
 {
   double DSoluteDt = 0.0;
+  double edgeSoluteFlux = 0.0;
 
   for(int i = 0; i < 4; i++)
   {
     double flow = edgeFlows[i];
+    edgeSoluteConcFluxes[soluteIndex][i] = 0.0;
 
     if(flow > 0.0)
     {
       if(edgeSoluteConcs[soluteIndex][i].isBC)
       {
-        DSoluteDt +=  flow * edgeSoluteConcs[soluteIndex][i].value;
+        edgeSoluteFlux =  flow * edgeSoluteConcs[soluteIndex][i].value;
+
+        DSoluteDt += edgeSoluteFlux;
+        edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
+
       }
       else if(neighbors[i])
       {
-        DSoluteDt +=  flow * S[neighbors[i]->index];
+        edgeSoluteFlux =  flow * S[neighbors[i]->index];
+
+        DSoluteDt += edgeSoluteFlux;
+        edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
       }
     }
     else
     {
-      DSoluteDt += flow * S[index];
+      edgeSoluteFlux = flow * S[index];
+
+      DSoluteDt += edgeSoluteFlux;
+      edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
     }
   }
 
@@ -472,26 +514,37 @@ double ElementCell::computeDSoluteDtUpwind(double dt, double S[], int soluteInde
 double ElementCell::computeDSoluteDtCentral(double dt, double S[], int soluteIndex)
 {
   double DSoluteDt = 0.0;
+  double edgeSoluteFlux = 0.0;
 
   for(int i = 0; i < 4; i++)
   {
     double edgeFlow = edgeFlows[i];
+    edgeSoluteConcFluxes[soluteIndex][i] = 0.0;
 
     if(edgeSoluteConcs[soluteIndex][i].isBC)
     {
-      DSoluteDt +=  edgeFlow * edgeSoluteConcs[soluteIndex][i].value;
+      edgeSoluteFlux =  edgeFlow * edgeSoluteConcs[soluteIndex][i].value;
+
+      DSoluteDt += edgeSoluteFlux;
+      edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
     }
     else if(neighbors[i])
     {
       double flp = flowLengthP[i] / 2.0;
       double fln = flowLengthN[i] / 2.0;
 
-      DSoluteDt += edgeFlow * (S[index] / flp   +  S[neighbors[i]->index] / fln) /
+      edgeSoluteFlux = edgeFlow * (S[index] / flp   +  S[neighbors[i]->index] / fln) /
           (1.0 / flp + 1.0 / fln);
+
+      DSoluteDt += edgeSoluteFlux;
+      edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
     }
     else if(edgeFlow < 0.0)
     {
-      DSoluteDt +=  edgeFlow * S[index];
+      edgeSoluteFlux =  edgeFlow * S[index];
+
+      DSoluteDt += edgeSoluteFlux;
+      edgeSoluteConcFluxes[soluteIndex][i] = edgeSoluteFlux;
     }
   }
 
@@ -651,12 +704,14 @@ void ElementCell::deleteSoluteVariables()
     for(int i = 0; i < parentElement->model->m_solutes.size(); i++)
     {
       delete[] edgeSoluteConcs[i];
+      delete[] edgeSoluteConcFluxes[i];
       delete[] edgeGradSoluteConcs[i];
       delete[] computeEdgeSoluteDerivs[i];
     }
 
     delete[] computeEdgeSoluteDerivs; computeEdgeSoluteDerivs = nullptr;
     delete[] edgeSoluteConcs; edgeSoluteConcs = nullptr;
+    delete[] edgeSoluteConcFluxes; edgeSoluteConcFluxes = nullptr;
     delete[] edgeGradSoluteConcs; edgeGradSoluteConcs = nullptr;
     delete[] retardationFactor; retardationFactor = nullptr;
   }
@@ -722,8 +777,6 @@ void ElementCell::computeEdgeDispersionCoefficients()
 
   effectiveKeZ = kep;
 
-  dispersivityZ = sqrtf(dispersivity[0] * dispersivity[0] + dispersivity[1]*dispersivity[1]);
-
   for(int i = 0; i < 4; i++)
   {
     int f = ef1[i];
@@ -783,6 +836,7 @@ void ElementCell::computeChannelMassFlux()
 {
   channelInflow = 0.0;
   channelInflowFlux = 0.0;
+  mechDispersionCoeffZ = 0.0;
 
   double lower = fabs(centerY) - width / 2.0;
   double upper = fabs(centerY) + width / 2.0;
@@ -815,11 +869,11 @@ void ElementCell::computeChannelMassFlux()
 
         if(dz >= 0)
         {
-          channelInflow = min(channelInflow, maxFlow * 0.99);
+          channelInflow = min(channelInflow, maxFlow);
         }
         else
         {
-          channelInflow = max(channelInflow, maxFlow * 0.99);
+          channelInflow = max(channelInflow, maxFlow);
         }
       }
       else if(parentElement->channelWSE - topElev > 0.0)
@@ -830,13 +884,13 @@ void ElementCell::computeChannelMassFlux()
         double cond = hydConZCom / (parentElement->channelBedThickness / 2.0 + max(0.0, topElev - bedRockElev) / 2.0);
         channelInflow = min({hydConZCom * wettedWidth * parentElement->length,
                              cond * wettedWidth * parentElement->length * dz,
-                             maxFlow * 0.99});
+                             maxFlow});
       }
     }
 
     channelInflowFlux = channelInflow / (wettedWidth * parentElement->length);
 
-    mechDispersionCoeffZ = channelInflow / (porosity * wettedWidth * parentElement->length);
+    mechDispersionCoeffZ = fabs(channelInflow) * dispersivityZ / (wettedWidth * parentElement->length * porosity);
   }
 }
 
@@ -845,7 +899,7 @@ void ElementCell::computeChannelHeatFlux()
   channelHeatFlux = 0.0;
   channelHeatRate = 0.0;
 
-  if(wettedWidth)
+  if(wettedWidth > 0)
   {
     if(channelInflow >= 0.0)
     {
@@ -876,10 +930,11 @@ void ElementCell::computeChannelHeatFlux()
 
 void ElementCell::computeChannelSoluteFlux(int soluteIndex)
 {
-  channelSoluteRate[soluteIndex] = 0;
   channelSoluteFlux[soluteIndex] = 0;
+  channelSoluteRate[soluteIndex] = 0;
 
-  if(wettedWidth)
+
+  if(wettedWidth > 0)
   {
     double rate = 0.0;
 
@@ -961,7 +1016,10 @@ double ElementCell::computeEdgeTempBC(int edgeIndex, double dt, double T[])
                         parentElement->model->m_cp * edgePorosity[edgeIndex] + edgeEffectiveKe[edgeIndex];
 
   edgeGradTemperatures[edgeIndex].value = gradT;
-  double edgeFlow = heatDisCoeff *  gradT * edgeDepths[edgeIndex] * flowWidth[edgeIndex] ;
+
+  double edgeFlow = heatDisCoeff *  gradT * edgeDepths[edgeIndex] * flowWidth[edgeIndex];
+  edgeHeatFluxes[edgeIndex] += edgeFlow;
+
   return edgeFlow;
 }
 
@@ -971,6 +1029,7 @@ double ElementCell::computeEdgeGradTempBC(int edgeIndex, double dt, double T[])
                         parentElement->model->m_cp * edgePorosity[edgeIndex] + edgeEffectiveKe[edgeIndex];
 
   double edgeFlow = heatDisCoeff *  edgeGradTemperatures[edgeIndex].value * edgeDepths[edgeIndex] * flowWidth[edgeIndex] ;
+  edgeHeatFluxes[edgeIndex] += edgeFlow;
   return edgeFlow;
 }
 
@@ -988,6 +1047,7 @@ double ElementCell::computeNeighborTempBC(int edgeIndex, double dt, double T[])
 
   edgeGradTemperatures[edgeIndex].value = gradT;
   double edgeFlow = heatDisCoeff * gradT *  edgeDepths[edgeIndex] * flowWidth[edgeIndex];
+  edgeHeatFluxes[edgeIndex] += edgeFlow;
 
   return edgeFlow;
 }
@@ -995,6 +1055,7 @@ double ElementCell::computeNeighborTempBC(int edgeIndex, double dt, double T[])
 double ElementCell::computeZeroTempBC(int edgeIndex, double dt, double T[])
 {
   edgeGradTemperatures[edgeIndex].value = 0.0;
+
   return 0.0;
 }
 
@@ -1006,6 +1067,8 @@ double ElementCell::computeEdgeSoluteBC(int edgeIndex, double dt, double S[], in
   edgeGradSoluteConcs[soluteIndex][edgeIndex].value = gradSolute;
   double edgeFlow = heatDisCoeff *  gradSolute * edgeDepths[edgeIndex] * flowWidth[edgeIndex];
 
+  edgeSoluteConcFluxes[soluteIndex][edgeIndex] += edgeFlow;
+
   return edgeFlow;
 }
 
@@ -1013,6 +1076,8 @@ double ElementCell::computeEdgeGradSoluteBC(int edgeIndex, double dt, double S[]
 {
   double heatDisCoeff = edgeMechDispersionCoeff[edgeIndex] + parentElement->model->m_solute_molecular_diff[soluteIndex];
   double edgeFlow = heatDisCoeff *  edgeGradSoluteConcs[soluteIndex][edgeIndex].value * edgeDepths[edgeIndex] * flowWidth[edgeIndex];
+
+  edgeSoluteConcFluxes[soluteIndex][edgeIndex] += edgeFlow;
 
   return edgeFlow;
 }
@@ -1032,6 +1097,8 @@ double ElementCell::computeNeighborSoluteBC(int edgeIndex, double dt, double S[]
 
   edgeGradSoluteConcs[soluteIndex][edgeIndex].value = gradSolute;
   double edgeFlow = heatDisCoeff * gradSolute *  edgeDepths[edgeIndex] * flowWidth[edgeIndex];
+
+  edgeSoluteConcFluxes[soluteIndex][edgeIndex] += edgeFlow;
 
   return edgeFlow;
 }

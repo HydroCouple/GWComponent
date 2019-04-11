@@ -115,6 +115,11 @@ struct ElementCell
     Variable *edgeGradTemperatures;
 
     /*!
+     * \brief edgeHeatFluxes
+     */
+    double *edgeHeatFluxes;
+
+    /*!
      * \brief externalHeatFluxes
      */
     double externalHeatFluxes;
@@ -163,6 +168,9 @@ struct ElementCell
      * \brief gradEdgeSoluteConcs
      */
     Variable **edgeGradSoluteConcs;
+
+
+    double **edgeSoluteConcFluxes;
 
     /*!
      * \brief externalSoluteFluxes

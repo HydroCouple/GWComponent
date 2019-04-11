@@ -867,6 +867,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_totalExternalHeatBalance = 0.0,
     m_dispersivityX = 0.05,
     m_dispersivityY = 0.05,
+    m_dispersivityZ = 0.05,
     m_waterThermalConductivity = 0.606,
     m_sedThermalConductivity = 2.6;
 
