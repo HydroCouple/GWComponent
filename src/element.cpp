@@ -118,7 +118,7 @@ void Element::computeChannelHeatFlux()
   for(int j = 0; j < model->m_totalCellsPerElement; j++)
   {
     ElementCell *elementCell = elementCells[j];
-    elementCell->computeChannelMassFlux();
+    elementCell->computeChannelHeatFlux();
     channelHeatRate += elementCell->channelHeatRate;
   }
 

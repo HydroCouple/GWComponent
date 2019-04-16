@@ -891,6 +891,7 @@ void ElementCell::computeChannelMassFlux()
     channelInflowFlux = channelInflow / (wettedWidth * parentElement->length);
 
     mechDispersionCoeffZ = fabs(channelInflow) * dispersivityZ / (wettedWidth * parentElement->length * porosity);
+
   }
 }
 
@@ -918,7 +919,18 @@ void ElementCell::computeChannelHeatFlux()
       double gradT = (parentElement->channelTemperature - temperature.value) /
                      ((topElev - bedRockElev) / 2.0 + parentElement->channelBedThickness / 2.0);
 
-      double heatDisCoeff = mechDispersionCoeffZ * parentElement->model->m_waterDensity *
+      double edgeDisp = 0;
+
+      if(elementCellIndex - 1 > -1 && parentElement->elementCells[elementCellIndex - 1]->wettedWidth == 0)
+      {
+        edgeDisp = fabs(channelInflow) * dispersivity[0] / (wettedWidth * parentElement->length * porosity);
+      }
+      else if(elementCellIndex + 1 < parentElement->elementCells.size() && parentElement->elementCells[elementCellIndex+1]->width == 0)
+      {
+        edgeDisp = fabs(channelInflow) * dispersivity[0] / (wettedWidth * parentElement->length * porosity);
+      }
+
+      double heatDisCoeff = (mechDispersionCoeffZ + edgeDisp) *  parentElement->model->m_waterDensity *
                             parentElement->model->m_cp * porosity + effectiveKeZ;
 
       channelHeatRate += heatDisCoeff * gradT * wettedWidth * parentElement->length;
@@ -952,7 +964,19 @@ void ElementCell::computeChannelSoluteFlux(int soluteIndex)
       double gradSolute = (parentElement->channelSoluteConcs[soluteIndex] - soluteConcs[soluteIndex].value) /
                           ((topElev - bedRockElev) / 2.0 + parentElement->channelBedThickness / 2.0);
 
-      double heatDisCoeff = mechDispersionCoeffZ + parentElement->model->m_solute_molecular_diff[soluteIndex];
+
+      double edgeDisp = 0;
+
+      if(elementCellIndex - 1 > -1 && parentElement->elementCells[elementCellIndex - 1]->wettedWidth == 0)
+      {
+        edgeDisp = fabs(channelInflow) * dispersivity[0] / (wettedWidth * parentElement->length * porosity);
+      }
+      else if(elementCellIndex + 1 < parentElement->elementCells.size() && parentElement->elementCells[elementCellIndex+1]->width == 0)
+      {
+        edgeDisp = fabs(channelInflow) * dispersivity[0] / (wettedWidth * parentElement->length * porosity);
+      }
+
+      double heatDisCoeff = (mechDispersionCoeffZ + edgeDisp) + parentElement->model->m_solute_molecular_diff[soluteIndex];
 
       rate += heatDisCoeff *  gradSolute * wettedWidth * parentElement->length;
     }
