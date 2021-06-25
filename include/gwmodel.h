@@ -47,6 +47,9 @@ struct SolverUserData
 };
 
 typedef void (*RetrieveCouplingData)(GWModel *model, double dateTime);
+typedef void (*WriteVariableToNetCDF)(size_t currentTime,
+                                      ThreadSafeNcVar &variable,
+                                      const std::vector<Element*>& elements);
 
 class GWCOMPONENT_EXPORT GWModel: public QObject
 {
@@ -731,6 +734,14 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     bool readInputFileChannelBoundaryConditions(const QString &line, QString &errorMessage);
 
     /*!
+     * \brief readInputFileChannelZCellFactors
+     * \param line
+     * \param errorMessage
+     * \return
+     */
+    bool readInputFileChannelZCellFactors(const QString &line, QString &errorMessage);
+
+    /*!
      * \brief writeOutput
      */
     void writeOutput();
@@ -829,7 +840,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_numLeftCellsPerElement,
     m_numRightCellsPerElement,
     m_totalCellsPerElement,
-    m_numSolutes = 0;
+    m_numSolutes = 0,
+    m_numBedZCells = 1;
 
     bool m_useAdaptiveTimeStep, //Use the adaptive time step option
     m_verbose, //Print simulation information to console
@@ -842,6 +854,7 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     std::unordered_map<std::string, ElementJunction*> m_elementJunctionsById; //added for fast lookup using identifiers instead of indexes.
 
     //1D Computational elements
+    std::vector<double> m_zcellFactors;
     std::vector<Element*> m_elements;
     std::unordered_map<std::string, Element*> m_elementsById; //added for fast lookup using identifiers instead of indexes.
 
@@ -859,7 +872,8 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
     m_hydConX = 0.0, //Hydraulic conductivity in the X direction
     m_hydConY = 0.0001, //Hydraaulic conductivity in the Y direction
     m_hydConZ = 0.0001,
-    m_specificStorage = 0.3,
+    m_specificYield = 0.2,
+    m_specificStorage = 6.2e-3,
     m_porosity = 0.3,
     m_defaultCellWidth = 1.0,
     m_totalMassBalance = 0.0,
@@ -884,6 +898,9 @@ class GWCOMPONENT_EXPORT GWModel: public QObject
 #ifdef USE_NETCDF
     ThreadSafeNcFile *m_outputNetCDF = nullptr; //NetCDF output file object
     std::unordered_map<std::string, ThreadSafeNcVar> m_outNetCDFVariables;
+    std::unordered_map<std::string, bool> m_outNetCDFVariablesOnOff;
+    std::unordered_map<std::string, WriteVariableToNetCDF> m_outNetCDFVariablesIOFunctions;
+    std::vector<std::string> m_optionalOutputVariables;
 #endif
 
     static const std::unordered_map<std::string, int> m_inputFileFlags; //Input file flags

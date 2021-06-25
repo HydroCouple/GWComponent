@@ -3,6 +3,7 @@
 #include "gwmodel.h"
 #include "temporal/timeseries.h"
 #include "element.h"
+#include "elementcell.h"
 #include "core/datacursor.h"
 
 EdgeBC::EdgeBC(Variable variable,
@@ -81,11 +82,27 @@ void EdgeBC::prepare()
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeHydHead[m_edge].isBC = true;
 
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeHydHead[m_edge].isBC = true;
+              }
+            }
+
             ElementCell *nCell = nullptr;
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeHydHead[m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeHydHead[m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -103,11 +120,27 @@ void EdgeBC::prepare()
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradHydHead[m_edge].isBC = true;
 
-            ElementCell *nCell = nullptr;
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeGradHydHead[m_edge].isBC = true;
+              }
+            }
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+              ElementCell *nCell = nullptr;
+
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeGradHydHead[m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeGradHydHead[m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -124,12 +157,27 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeTemperatures[m_edge].isBC = true;
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeTemperatures[m_edge].isBC = true;
+              }
+            }
 
             ElementCell *nCell = nullptr;
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeTemperatures[m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeTemperatures[m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -146,12 +194,27 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradTemperatures[m_edge].isBC = true;
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeGradTemperatures[m_edge].isBC = true;
+              }
+            }
 
             ElementCell *nCell = nullptr;
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeGradTemperatures[m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeGradTemperatures[m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -168,12 +231,27 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+              }
+            }
 
             ElementCell *nCell = nullptr;
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -190,12 +268,27 @@ void EdgeBC::prepare()
             int cellIndex = m_startElementCell + j;
             ElementCell *elementCell = m_profile[i]->elementCells[cellIndex];
             elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+            if(elementCell->isBedCell)
+            {
+              for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+              {
+                elementCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_edge].isBC = true;
+              }
+            }
 
             ElementCell *nCell = nullptr;
 
-            if((nCell = elementCell->neighbors[m_nEdge]))
+            if((nCell = elementCell->neighbour(m_edge)))
             {
               nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+
+              if(nCell->isBedCell)
+              {
+                for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+                {
+                  nCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].isBC = true;
+                }
+              }
             }
           }
         }
@@ -302,12 +395,27 @@ void EdgeBC::applyHydHeadBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeHydHead[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeHydHead[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeHydHead[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeHydHead[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -323,12 +431,27 @@ void EdgeBC::applyHydHeadBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeHydHead[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeHydHead[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeHydHead[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeHydHead[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -352,11 +475,27 @@ void EdgeBC::applyGradHydHeadBC(double dateTime)
         {
           elementCell->edgeGradHydHead[m_edge].value = value;
 
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradHydHead[m_edge].value = value;
+            }
+          }
+
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradHydHead[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradHydHead[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -373,11 +512,27 @@ void EdgeBC::applyGradHydHeadBC(double dateTime)
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradHydHead[m_edge].value = value;
 
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradHydHead[m_edge].value = value;
+            }
+          }
+
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradHydHead[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradHydHead[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -400,12 +555,27 @@ void EdgeBC::applyTempBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeTemperatures[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeTemperatures[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeTemperatures[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeTemperatures[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -421,12 +591,27 @@ void EdgeBC::applyTempBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeTemperatures[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeTemperatures[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeTemperatures[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeTemperatures[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -449,12 +634,27 @@ void EdgeBC::applyGradTempBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeGradTemperatures[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradTemperatures[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradTemperatures[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradTemperatures[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -470,12 +670,27 @@ void EdgeBC::applyGradTempBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradTemperatures[m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradTemperatures[m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradTemperatures[m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradTemperatures[m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -498,12 +713,27 @@ void EdgeBC::applySoluteBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -519,12 +749,27 @@ void EdgeBC::applySoluteBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -547,12 +792,27 @@ void EdgeBC::applyGradSoluteBC(double dateTime)
         if(m_timeSeries->interpolate(dateTime, j, m_dataCursor, value))
         {
           elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+              }
+            }
           }
         }
       }
@@ -568,12 +828,27 @@ void EdgeBC::applyGradSoluteBC(double dateTime)
         {
           ElementCell *elementCell = m_profile[j]->elementCells[m_startElementCell + i];
           elementCell->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+          if(elementCell->isBedCell)
+          {
+            for(int k = 1; k < elementCell->parentElement->model->m_numBedZCells; k++)
+            {
+              elementCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_edge].value = value;
+            }
+          }
 
           ElementCell *nCell = nullptr;
 
-          if((nCell = elementCell->neighbors[m_nEdge]))
+          if((nCell = elementCell->neighbour(m_edge)))
           {
             nCell->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+
+            if(nCell->isBedCell)
+            {
+              for(int k = 1; k < nCell->parentElement->model->m_numBedZCells; k++)
+              {
+                nCell->bedCells[k]->edgeGradSoluteConcs[m_soluteIndex][m_nEdge].value = value;
+              }
+            }
           }
         }
       }

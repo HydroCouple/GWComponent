@@ -4,7 +4,6 @@
 #include <QObject>
 #include <vector>
 #include <QSharedPointer>
-
 #include "iboundarycondition.h"
 
 struct Element;

@@ -23,6 +23,7 @@
 #include "gwmodel.h"
 #include "temporal/timedata.h"
 #include "element.h"
+#include "elementcell.h"
 #include "elementjunction.h"
 #include "temporal/timedata.h"
 #include "threadsafenetcdf/threadsafencfile.h"
@@ -45,7 +46,7 @@ using namespace netCDF::exceptions;
 
 #endif
 
-const float GWModel::dir[] = {-1.0,-1.0,1.0,1.0};
+const float GWModel::dir[] = {-1.0,-1.0,1.0,1.0,-1.0,1.0};
 
 bool GWModel::verbose() const
 {
@@ -144,6 +145,7 @@ bool GWModel::initializeInputFiles(list<string> &errors)
     if (file.open(QIODevice::ReadOnly))
     {
       m_timeSeries.clear();
+      m_outNetCDFVariablesOnOff.clear();
 
       m_delimiters = QRegExp("(\\,|\\t|\\;|\\s+)");
       int currentFlag = -1;
@@ -212,6 +214,9 @@ bool GWModel::initializeInputFiles(list<string> &errors)
               case 12:
                 readSuccess = readInputFileChannelBoundaryConditions(line, error);
                 break;
+              case 13:
+                readSuccess = readInputFileChannelZCellFactors(line, error);
+                break;
             }
           }
 
@@ -241,7 +246,6 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 {
 
 #ifdef USE_NETCDF
-
 
   if (m_outputNetCDFFileInfo.isRelative())
   {
@@ -393,7 +397,6 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     element_y.putAtt("units", "m");
     m_outNetCDFVariables["element_y"] = element_y;
 
-
     int *fromJunctions = new int[m_elements.size()];
     int *toJunctions = new int[m_elements.size()];
     char **elementIds = new char *[m_elements.size()];
@@ -439,11 +442,13 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
     ThreadSafeNcDim elementCellsDim =  m_outputNetCDF->addDim("element_cells", m_totalCellsPerElement);
 
     //Edges
-    ThreadSafeNcDim elementCellFaceDim = m_outputNetCDF->addDim("element_cell_face", 4);
+    ThreadSafeNcDim elementCellFaceDim = m_outputNetCDF->addDim("element_cell_face", 6);
+
+    //Layers
+    ThreadSafeNcDim elementLayersDim = m_outputNetCDF->addDim("layers", m_numBedZCells);
 
     //hydraulics variables
-    ThreadSafeNcVar lengthVar =  m_outputNetCDF->addVar("length", "float",
-                                                        std::vector<std::string>({"elements"}));
+    ThreadSafeNcVar lengthVar =  m_outputNetCDF->addVar("length", "float", std::vector<std::string>({"elements"}));
     lengthVar.putAtt("long_name", "Element Length");
     lengthVar.putAtt("units", "m");
     m_outNetCDFVariables["length"] = lengthVar;
@@ -475,200 +480,1001 @@ bool GWModel::initializeNetCDFOutputFile(std::list<std::string> &errors)
 
     cellWidths.putVar(cell_widths.data());
 
-    //hydraulics variables
-    ThreadSafeNcVar hydHeadVar =  m_outputNetCDF->addVar("hydraulic_head", "float",
-                                                         std::vector<std::string>({"time", "elements", "element_cells"}));
-    hydHeadVar.putAtt("long_name", "Hydraulic Head");
-    hydHeadVar.putAtt("units", "m");
-    m_outNetCDFVariables["hydraulic_head"] = hydHeadVar;
+    ThreadSafeNcVar layerFactors = m_outputNetCDF->addVar("layer_thickness_factors", NcType::nc_FLOAT, elementLayersDim);
+    layerFactors.putAtt("long_name","Layer Thickness Factor");
+    layerFactors.putAtt("units","");
+    m_outNetCDFVariables["layer_thickness_factors"] = layerFactors;
+    layerFactors.putVar(m_zcellFactors.data());
 
+    auto varOnOff = [this](const std::string& name) -> bool
+    {
+      return m_outNetCDFVariablesOnOff.find(name) != m_outNetCDFVariablesOnOff.end() ? m_outNetCDFVariablesOnOff[name] : true;
+    };
 
-    ThreadSafeNcVar dVolumeDtVar =  m_outputNetCDF->addVar("dvolume_dt", "float",
-                                                           std::vector<std::string>({"time", "elements", "element_cells"}));
-    dVolumeDtVar.putAtt("long_name", "Volume Time Derivative");
-    dVolumeDtVar.putAtt("units", "m");
-    m_outNetCDFVariables["dvolume_dt"] = dVolumeDtVar;
+    if((m_outNetCDFVariablesOnOff["hydraulic_head"] = varOnOff("hydraulic_head")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar hydHeadVar =  m_outputNetCDF->addVar("hydraulic_head", "float",
+                                                           std::vector<std::string>({"time", "elements", "element_cells", "layers"}));
+      hydHeadVar.putAtt("long_name", "Hydraulic Head");
+      hydHeadVar.putAtt("units", "m");
+      m_outNetCDFVariables["hydraulic_head"] = hydHeadVar;
+      m_outNetCDFVariablesIOFunctions["hydraulic_head"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
 
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
 
-    ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("saturated_depth", "float",
-                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
-    satDepthVar.putAtt("long_name", "Saturated Depth");
-    satDepthVar.putAtt("units", "m");
-    m_outNetCDFVariables["saturated_depth"] = satDepthVar;
+        float* output = new float[elements.size() * totalCellsPerElement]();
 
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
-    ThreadSafeNcVar totalElementCellMassBalanceVar =  m_outputNetCDF->addVar("total_element_cell_mass_balance", "float",
-                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
-    totalElementCellMassBalanceVar.putAtt("long_name", "Total Element Cell Mass Balance");
-    totalElementCellMassBalanceVar.putAtt("units", "m^3");
-    m_outNetCDFVariables["total_element_cell_mass_balance"] = totalElementCellMassBalanceVar;
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->hydHead.value;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->hydHead.value;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
 
-    ThreadSafeNcVar elementExternalInflowVar =  m_outputNetCDF->addVar("element_external_inflow", "float",
-                                                                       std::vector<std::string>({"time", "elements","element_cells"}));
-    elementExternalInflowVar.putAtt("long_name", "Element Cell External Inflow");
-    elementExternalInflowVar.putAtt("units", "m^3");
-    m_outNetCDFVariables["element_cell_external_inflow"] = elementExternalInflowVar;
+        delete[] output;
+      };
+    }
 
-    ThreadSafeNcVar elementCellExternalInflowVar =  m_outputNetCDF->addVar("element_cell_external_inflow", "float",
-                                                                           std::vector<std::string>({"time", "elements"}));
-    elementCellExternalInflowVar.putAtt("long_name", "Element External Inflow");
-    elementCellExternalInflowVar.putAtt("units", "m^3");
-    m_outNetCDFVariables["element_external_inflow"] = elementCellExternalInflowVar;
+    if((m_outNetCDFVariablesOnOff["saturated_thickness"] = varOnOff("saturated_thickness")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("saturated_thickness", "float",
+                                                            std::vector<std::string>({"time", "elements", "element_cells" }));
+      satDepthVar.putAtt("long_name", "Saturated Thickness");
+      satDepthVar.putAtt("units", "m");
+      m_outNetCDFVariables["saturated_thickness"] = satDepthVar;
+      m_outNetCDFVariablesIOFunctions["saturated_thickness"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
 
+        float* output = new float[elements.size() * totalCellsPerElement]();
 
-    ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_inflow", "float",
-                                                                      std::vector<std::string>({"time", "elements"}));
-    elementChannelInflowVar.putAtt("long_name", "Element Channel Inflow");
-    elementChannelInflowVar.putAtt("units", "m^3/s");
-    m_outNetCDFVariables["element_channel_inflow"] = elementChannelInflowVar;
+//        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
-    ThreadSafeNcVar elementChannelInflowFluxVar =  m_outputNetCDF->addVar("element_channel_flux", "float",
-                                                                          std::vector<std::string>({"time", "elements"}));
-    elementChannelInflowFluxVar.putAtt("long_name", "Element Channel Inflow Flux");
-    elementChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
-    m_outNetCDFVariables["element_channel_flux"] = elementChannelInflowFluxVar;
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
 
+              {
+                output[j + i * totalCellsPerElement] = elementCell->hydHead.value - elementCell->bedRockElev;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement}), output);
+        }
 
-    ThreadSafeNcVar elementCellChannelInflowVar =  m_outputNetCDF->addVar("element_cell_channel_inflow", "float",
-                                                                          std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellChannelInflowVar.putAtt("long_name", "Element Cell Channel Inflow");
-    elementCellChannelInflowVar.putAtt("units", "m^3/s");
-    m_outNetCDFVariables["element_cell_channel_inflow"] = elementCellChannelInflowVar;
+        delete[] output;
+      };
+    }
 
+    if((m_outNetCDFVariablesOnOff["wetted_width_per_width"] = varOnOff("wetted_width_per_width")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("wetted_width_per_width", "float",
+                                                            std::vector<std::string>({"time", "elements", "element_cells" }));
+      satDepthVar.putAtt("long_name", "Wetted width per unit width");
+      satDepthVar.putAtt("units", "m");
+      m_outNetCDFVariables["wetted_width_per_width"] = satDepthVar;
+      m_outNetCDFVariablesIOFunctions["wetted_width_per_width"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
 
-    ThreadSafeNcVar elementCellChannelInflowFluxVar =  m_outputNetCDF->addVar("element_cell_channel_flux", "float",
-                                                                              std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellChannelInflowFluxVar.putAtt("long_name", "Element Cell Channel Inflow Flux");
-    elementCellChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
-    m_outNetCDFVariables["element_cell_channel_flux"] = elementCellChannelInflowFluxVar;
+        float* output = new float[elements.size() * totalCellsPerElement]();
 
+//        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
-    ThreadSafeNcVar elementCellFaceFlowVar =  m_outputNetCDF->addVar("element_cell_face_flow", "float",
-                                                                     std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
-    elementCellFaceFlowVar.putAtt("long_name", "Element Cell Face Flow");
-    elementCellFaceFlowVar.putAtt("units", "m^3/s");
-    m_outNetCDFVariables["element_cell_face_flow"] = elementCellFaceFlowVar;
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
 
+              {
+                output[j + i * totalCellsPerElement] = elementCell->wettedWidth / elementCell->width;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement}), output);
+        }
 
-    ThreadSafeNcVar elementCellFaceHeatFlowVar =  m_outputNetCDF->addVar("element_cell_face_heat_flow", "float",
-                                                                     std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
-    elementCellFaceHeatFlowVar.putAtt("long_name", "Element Cell Face Heat Flow");
-    elementCellFaceHeatFlowVar.putAtt("units", "J/s");
-    m_outNetCDFVariables["element_cell_face_heat_flow"] = elementCellFaceHeatFlowVar;
+        delete[] output;
+      };
+    }
 
+    if((m_outNetCDFVariablesOnOff["layer_depth"] = varOnOff("layer_depth")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar satDepthVar =  m_outputNetCDF->addVar("layer_depth", "float",
+                                                            std::vector<std::string>({"time", "elements", "element_cells", "layers" }));
+      satDepthVar.putAtt("long_name", "Layer Depth");
+      satDepthVar.putAtt("units", "m");
+      m_outNetCDFVariables["layer_depth"] = satDepthVar;
+      m_outNetCDFVariablesIOFunctions["layer_depth"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
 
-    //    ThreadSafeNcVar elementCellFaceFluxVar =  m_outputNetCDF->addVar("element_cell_face_flux", "float",
-    //                                                                     std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
-    //    elementCellFaceFluxVar.putAtt("long_name", "Element Cell Face Flux");
-    //    elementCellFaceFluxVar.putAtt("units", "m^3/m^2/s");
-    //    m_outNetCDFVariables["element_cell_face_flux"] = elementCellFaceFluxVar;
+        float* output = new float[elements.size() * totalCellsPerElement]();
 
-    //    ThreadSafeNcVar elementCellFaceSupVelVar =  m_outputNetCDF->addVar("element_cell_face_sup_velocity", "float",
-    //                                                                       std::vector<std::string>({"time", "elements","element_cells","element_cell_face"}));
-    //    elementCellFaceSupVelVar.putAtt("long_name", "Element Cell Face Superficial Velocity");
-    //    elementCellFaceSupVelVar.putAtt("units", "m/s");
-    //    m_outNetCDFVariables["element_cell_face_sup_velocity"] = elementCellFaceSupVelVar;
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
 
-    //    ThreadSafeNcVar elementCellSupVelXVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_x", "float",
-    //                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
-    //    elementCellSupVelXVar.putAtt("long_name", "Element Cell Superficial X Velocity");
-    //    elementCellSupVelXVar.putAtt("units", "m/s");
-    //    m_outNetCDFVariables["element_cell_sup_velocity_x"] = elementCellSupVelXVar;
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->depth;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->depth;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
 
+        delete[] output;
+      };
+    }
 
-    //    ThreadSafeNcVar elementCellSupVelYVar =  m_outputNetCDF->addVar("element_cell_sup_velocity_y", "float",
-    //                                                                    std::vector<std::string>({"time", "elements","element_cells"}));
-    //    elementCellSupVelYVar.putAtt("long_name", "Element Cell Superficial Y Velocity");
-    //    elementCellSupVelYVar.putAtt("units", "m/s");
-    //    m_outNetCDFVariables["element_cell_sup_velocity_y"] = elementCellSupVelYVar;
+    if((m_outNetCDFVariablesOnOff["total_element_cell_mass_balance"] = varOnOff("total_element_cell_mass_balance")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar totalElementCellMassBalanceVar =  m_outputNetCDF->addVar("total_element_cell_mass_balance", "float",
+                                                                               std::vector<std::string>({"time", "elements","element_cells", "layers"}));
+      totalElementCellMassBalanceVar.putAtt("long_name", "Total Element Cell Mass Balance");
+      totalElementCellMassBalanceVar.putAtt("units", "m^3");
+      m_outNetCDFVariables["total_element_cell_mass_balance"] = totalElementCellMassBalanceVar;
+      m_outNetCDFVariablesIOFunctions["total_element_cell_mass_balance"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
 
+        float* output = new float[elements.size() * totalCellsPerElement]();
 
-    ThreadSafeNcVar totalMassBalanceVar =  m_outputNetCDF->addVar("total_mass_balance", "float",
-                                                                  std::vector<std::string>({"time"}));
-    totalMassBalanceVar.putAtt("long_name", "Total Mass Balance");
-    totalMassBalanceVar.putAtt("units", "m^3");
-    m_outNetCDFVariables["total_mass_balance"] = totalMassBalanceVar;
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
-    ThreadSafeNcVar tempVar =  m_outputNetCDF->addVar("temperature", "float",
-                                                      std::vector<std::string>({"time", "elements", "element_cells"}));
-    tempVar.putAtt("long_name", "Temperature");
-    tempVar.putAtt("units", "°C");
-    m_outNetCDFVariables["temperature"] = tempVar;
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
 
-    ThreadSafeNcVar waterAgeVar =  m_outputNetCDF->addVar("water_age", "float",
-                                                          std::vector<std::string>({"time", "elements", "element_cells"}));
-    waterAgeVar.putAtt("long_name", "Water Age");
-    waterAgeVar.putAtt("units", "days");
-    m_outNetCDFVariables["water_age"] = waterAgeVar;
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->totalMassBalance;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->totalMassBalance;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
 
+        delete[] output;
+      };
+    }
 
-    ThreadSafeNcVar elementExternalHeatFluxVar =  m_outputNetCDF->addVar("element_external_heat_flux", "float",
+    if((m_outNetCDFVariablesOnOff["element_cell_external_inflow"] = varOnOff("element_cell_external_inflow")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementCellExternalInflowVar =  m_outputNetCDF->addVar("element_cell_external_inflow", "float",
+                                                                             std::vector<std::string>({"time", "elements","element_cells", "layers"}));
+      elementCellExternalInflowVar.putAtt("long_name", "Element Cell External Inflow");
+      elementCellExternalInflowVar.putAtt("units", "m^3");
+      m_outNetCDFVariables["element_cell_external_inflow"] = elementCellExternalInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_external_inflow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->externalInflow;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->externalInflow;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_external_inflow"] = varOnOff("element_external_inflow")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementExternalInflowVar =  m_outputNetCDF->addVar("element_external_inflow", "float",
                                                                          std::vector<std::string>({"time", "elements"}));
-    elementExternalHeatFluxVar.putAtt("long_name", "Element External Heat Flux");
-    elementExternalHeatFluxVar.putAtt("units", "J/s");
-    m_outNetCDFVariables["element_external_heat_flux"] = elementExternalHeatFluxVar;
+      elementExternalInflowVar.putAtt("long_name", "Element External Inflow");
+      elementExternalInflowVar.putAtt("units", "m^3");
+      m_outNetCDFVariables["element_external_inflow"] = elementExternalInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_external_inflow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
 
+        float* output = new float[elements.size()]();
 
-    ThreadSafeNcVar elementCellExternalHeatFluxVar =  m_outputNetCDF->addVar("element_cell_external_heat_flux", "float",
-                                                                             std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellExternalHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
-    elementCellExternalHeatFluxVar.putAtt("units", "J/s");
-    m_outNetCDFVariables["element_cell_external_heat_flux"] = elementCellExternalHeatFluxVar;
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
 
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
 
-    ThreadSafeNcVar elementChannelHeatFluxVar =  m_outputNetCDF->addVar("element_channel_heat_flux", "float",
+              if(elementCell->isBedCell)
+              {
+                output[i] += elementCell->bedCells[k]->externalInflow;
+              }
+              else
+              {
+                output[i] += elementCell->externalInflow;
+              }
+            }
+          }
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_inflow"] = varOnOff("element_channel_inflow")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_inflow", "float",
                                                                         std::vector<std::string>({"time", "elements"}));
-    elementChannelHeatFluxVar.putAtt("long_name", "Element Channel Heat Flux");
-    elementChannelHeatFluxVar.putAtt("units", "J/s");
-    m_outNetCDFVariables["element_channel_heat_flux"] = elementChannelHeatFluxVar;
+      elementChannelInflowVar.putAtt("long_name", "Element Channel Inflow");
+      elementChannelInflowVar.putAtt("units", "m^3/s");
+      m_outNetCDFVariables["element_channel_inflow"] = elementChannelInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_inflow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        float* output = new float[elements.size()]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelInflow;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_flow_width"] = varOnOff("element_channel_flow_width")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_flow_width", "float",
+                                                                        std::vector<std::string>({"time", "elements"}));
+      elementChannelInflowVar.putAtt("long_name", "Element Channel Flow Width");
+      elementChannelInflowVar.putAtt("units", "m");
+      m_outNetCDFVariables["element_channel_flow_width"] = elementChannelInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_flow_width"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        float* output = new float[elements.size()]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelWidth;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_temperature"] = varOnOff("element_channel_temperature")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelInflowVar =  m_outputNetCDF->addVar("element_channel_temperature", "float",
+                                                                        std::vector<std::string>({"time", "elements"}));
+      elementChannelInflowVar.putAtt("long_name", "Element Channel Temperature");
+      elementChannelInflowVar.putAtt("units", "C");
+      m_outNetCDFVariables["element_channel_temperature"] = elementChannelInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_temperature"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        float* output = new float[elements.size()]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelTemperature;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_solute_concentration"] = varOnOff("element_channel_solute_concentration")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelSoluteConcVar =  m_outputNetCDF->addVar("element_channel_solute_concentration", "float",
+                                                                            std::vector<std::string>({"time", "solutes", "elements"}));
+      elementChannelSoluteConcVar.putAtt("long_name", "Element Channel Solute Concentration");
+      elementChannelSoluteConcVar.putAtt("units", "kg/m^3");
+      m_outNetCDFVariables["element_channel_solute_concentration"] = elementChannelSoluteConcVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_solute_concentration"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int numSolutes = firstElement->model->m_numSolutes;
+
+        for(int sol_index = 0; sol_index < numSolutes; sol_index++)
+        {
+
+          float* output = new float[elements.size()]();
+
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+            output[i] = element->channelSoluteConcs[sol_index];
+          }
+
+          variable.putVar(std::vector<size_t>({currentTime, (size_t)sol_index, 0}), std::vector<size_t>({1, 1, elements.size()}), output);
+
+          delete[] output;
+        }
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_flux"] = varOnOff("element_channel_flux")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelInflowFluxVar =  m_outputNetCDF->addVar("element_channel_flux", "float",
+                                                                            std::vector<std::string>({"time", "elements"}));
+      elementChannelInflowFluxVar.putAtt("long_name", "Element Channel Inflow Flux");
+      elementChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
+      m_outNetCDFVariables["element_channel_flux"] = elementChannelInflowFluxVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_flux"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        float* output = new float[elements.size()]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelInflowFlux;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_channel_inflow"] = varOnOff("element_cell_channel_inflow")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementCellChannelInflowVar =  m_outputNetCDF->addVar("element_cell_channel_inflow", "float",
+                                                                            std::vector<std::string>({"time", "elements","element_cells", "layers"}));
+      elementCellChannelInflowVar.putAtt("long_name", "Element Cell Channel Inflow");
+      elementCellChannelInflowVar.putAtt("units", "m^3/s");
+      m_outNetCDFVariables["element_cell_channel_inflow"] = elementCellChannelInflowVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_channel_inflow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] += elementCell->bedCells[k]->channelInflow;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->channelInflow;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_channel_flux"] = varOnOff("element_cell_channel_flux")))
+    {
+      ThreadSafeNcVar elementCellChannelInflowFluxVar =  m_outputNetCDF->addVar("element_cell_channel_flux", "float",
+                                                                                std::vector<std::string>({"time", "elements","element_cells", "layers"}));
+      elementCellChannelInflowFluxVar.putAtt("long_name", "Element Cell Channel Inflow Flux");
+      elementCellChannelInflowFluxVar.putAtt("units", "m^3/m^2/s");
+      m_outNetCDFVariables["element_cell_channel_flux"] = elementCellChannelInflowFluxVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_channel_flux"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[i] += elementCell->bedCells[k]->channelInflowFlux;
+              }
+              else
+              {
+                output[i] += elementCell->channelInflowFlux;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_face_flow"] = varOnOff("element_cell_face_flow")))
+    {
+      ThreadSafeNcVar elementCellFaceFlowVar =  m_outputNetCDF->addVar("element_cell_face_flow", "float",
+                                                                       std::vector<std::string>({"time", "elements","element_cells","element_cell_face", "layers"}));
+      elementCellFaceFlowVar.putAtt("long_name", "Element Cell Face Flow");
+      elementCellFaceFlowVar.putAtt("units", "m^3/s");
+      m_outNetCDFVariables["element_cell_face_flow"] = elementCellFaceFlowVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_face_flow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement * 6]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                ElementCell *eCell = elementCell->bedCells[k];
+
+                for(int m = 0; m < 6; m++)
+                {
+                  output[m + j * 6 + i * 6 * totalCellsPerElement] = eCell->edgeFlows[m] * 1.0f;
+                }
+              }
+              else
+              {
+                for(int m = 0; m < 6; m++)
+                {
+                  output[m + j * 6 + i * 6 * totalCellsPerElement] = elementCell->edgeFlows[m] * 1.0f;
+                }
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 6, 1}), output);
+        }
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["temperature"] = varOnOff("temperature")))
+    {
+
+      ThreadSafeNcVar tempVar =  m_outputNetCDF->addVar("temperature", "float",
+                                                        std::vector<std::string>({"time", "elements", "element_cells", "layers"}));
+      tempVar.putAtt("long_name", "Temperature");
+      tempVar.putAtt("units", "°C");
+      m_outNetCDFVariables["temperature"] = tempVar;
+      m_outNetCDFVariablesIOFunctions["temperature"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->temperature.value;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->temperature.value;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["volume"] = varOnOff("volume")))
+    {
+
+      ThreadSafeNcVar tempVar =  m_outputNetCDF->addVar("volume", "float",
+                                                        std::vector<std::string>({"time", "elements", "element_cells", "layers"}));
+      tempVar.putAtt("long_name", "volume");
+      tempVar.putAtt("units", "m^3");
+      m_outNetCDFVariables["volume"] = tempVar;
+      m_outNetCDFVariablesIOFunctions["volume"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->volume;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->volume;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["DSoluteDt"] = varOnOff("DSoluteDt")))
+    {
+
+      ThreadSafeNcVar tempVar =  m_outputNetCDF->addVar("DSoluteDt", "float",
+                                                        std::vector<std::string>({"time", "elements", "element_cells", "layers"}));
+      tempVar.putAtt("long_name", "DSoluteDt");
+      tempVar.putAtt("units", "m^3");
+      m_outNetCDFVariables["DSoluteDt"] = tempVar;
+      m_outNetCDFVariablesIOFunctions["DSoluteDt"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                output[j + i * totalCellsPerElement] = elementCell->bedCells[k]->dsolute_dt;
+              }
+              else
+              {
+                output[j + i * totalCellsPerElement] = elementCell->dsolute_dt;
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+        }
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_face_heat_flow"] = varOnOff("element_cell_face_heat_flow")))
+    {
+      ThreadSafeNcVar elementCellFaceHeatFlowVar =  m_outputNetCDF->addVar("element_cell_face_heat_flow", "float",
+                                                                           std::vector<std::string>({"time", "elements","element_cells","element_cell_face", "layers"}));
+      elementCellFaceHeatFlowVar.putAtt("long_name", "Element Cell Face Heat Flow");
+      elementCellFaceHeatFlowVar.putAtt("units", "J/s");
+      m_outNetCDFVariables["element_cell_face_heat_flow"] = elementCellFaceHeatFlowVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_face_heat_flow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement * 6]();
+
+        for (int k = 0; k < layers; k++)
+        {
+          for (int i = 0; i < (int)elements.size(); i++)
+          {
+            Element *element = elements[i];
+
+            for(int j = 0; j < totalCellsPerElement; j++)
+            {
+              ElementCell *elementCell = element->elementCells[j];
+
+              if(elementCell->isBedCell)
+              {
+                ElementCell *eCell = elementCell->bedCells[k];
+
+                for(int m = 0; m < 6; m++)
+                {
+                  output[m + j * 6 + i * 6 * totalCellsPerElement] = eCell->edgeHeatFluxes[m];
+                }
+              }
+              else
+              {
+                for(int m = 0; m < 6; m++)
+                {
+                  output[m + j * 6 + i * 6 * totalCellsPerElement] = elementCell->edgeHeatFluxes[m];
+                }
+              }
+            }
+          }
+          variable.putVar(std::vector<size_t>({currentTime, 0, 0, 0, (size_t)k}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement, 6, 1}), output);
+        }
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_face_solute_flow"] = varOnOff("element_cell_face_solute_flow")))
+    {
+      ThreadSafeNcVar elementCellFaceSoluteFlowVar =  m_outputNetCDF->addVar("element_cell_face_solute_flow", "float",
+                                                                             std::vector<std::string>({"time", "solutes", "elements","element_cells","element_cell_face", "layers"}));
+      elementCellFaceSoluteFlowVar.putAtt("long_name", "Element Cell Face Solute Flow");
+      elementCellFaceSoluteFlowVar.putAtt("units", "kg/s");
+      m_outNetCDFVariables["element_cell_face_solute_flow"] = elementCellFaceSoluteFlowVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_face_solute_flow"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+        int numSolutes = firstElement->model->m_numSolutes;
+
+        if (numSolutes > 0)
+        {
+          float* output = new float[elements.size() * totalCellsPerElement * 6]();
+
+          for(int s = 0; s < numSolutes; s++)
+          {
+            for (int k = 0; k < layers; k++)
+            {
+              for (int i = 0; i < (int)elements.size(); i++)
+              {
+                Element *element = elements[i];
+
+                for(int j = 0; j < totalCellsPerElement; j++)
+                {
+                  ElementCell *elementCell = element->elementCells[j];
+
+                  if(elementCell->isBedCell)
+                  {
+                    ElementCell *eCell = elementCell->bedCells[k];
+
+                    for(int m = 0; m < 6; m++)
+                    {
+                      output[m + j * 6 + i * 6 * totalCellsPerElement] = eCell->edgeSoluteConcFluxes[s][m];
+                    }
+                  }
+                  else
+                  {
+                    for(int m = 0; m < 6; m++)
+                    {
+                      output[m + j * 6 + i * 6 * totalCellsPerElement] = elementCell->edgeSoluteConcFluxes[s][m];
+                    }
+                  }
+                }
+              }
+              variable.putVar(std::vector<size_t>({currentTime, (size_t)s, 0, 0, 0, (size_t)k}), std::vector<size_t>({1, 1, elements.size(), (size_t)totalCellsPerElement, 6, 1}), output);
+            }
+          }
+
+          delete[] output;
+        }
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_heat_flux"] = varOnOff("element_channel_heat_flux")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelHeatFluxVar =  m_outputNetCDF->addVar("element_channel_heat_flux", "float",
+                                                                          std::vector<std::string>({"time", "elements"}));
+      elementChannelHeatFluxVar.putAtt("long_name", "Element Channel Heat Flux");
+      elementChannelHeatFluxVar.putAtt("units", "J/s");
+      m_outNetCDFVariables["element_channel_heat_flux"] = elementChannelHeatFluxVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_heat_flux"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        float* output = new float[elements.size()]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelHeatFlux;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_cell_channel_heat_flux"] = varOnOff("element_cell_channel_heat_flux")))
+    {
+      ThreadSafeNcVar elementCellChannelHeatFluxVar =  m_outputNetCDF->addVar("element_cell_channel_heat_flux", "float",
+                                                                              std::vector<std::string>({"time", "elements","element_cells"}));
+      elementCellChannelHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
+      elementCellChannelHeatFluxVar.putAtt("units", "J/s");
+      m_outNetCDFVariables["element_cell_channel_heat_flux"] = elementCellChannelHeatFluxVar;
+      m_outNetCDFVariablesIOFunctions["element_cell_channel_heat_flux"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+        int layers = firstElement->model->m_numBedZCells;
+
+        float* output = new float[elements.size() * totalCellsPerElement]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+
+          for(int j = 0; j < totalCellsPerElement; j++)
+          {
+            ElementCell *elementCell = element->elementCells[j];
+            output[j + i * totalCellsPerElement] = elementCell->channelHeatFlux;
+          }
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, elements.size(), (size_t)totalCellsPerElement}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["solute_concentration"] = varOnOff("solute_concentration")))
+    {
+
+      ThreadSafeNcVar solutesVar =  m_outputNetCDF->addVar("solute_concentration", "float",
+                                                           std::vector<std::string>({"time", "solutes", "elements", "element_cells", "layers"}));
+      solutesVar.putAtt("long_name", "Solute Concentration");
+      solutesVar.putAtt("units", "kg/m^3");
+      m_outNetCDFVariables["solute_concentration"] = solutesVar;
+      m_outNetCDFVariablesIOFunctions["solute_concentration"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int numSolutes = firstElement->model->m_numSolutes;
+
+        if(numSolutes > 0)
+        {
+          int  totalCellsPerElement = firstElement->model->m_totalCellsPerElement;
+          int layers = firstElement->model->m_numBedZCells;
+
+          float* output = new float[elements.size() * totalCellsPerElement * numSolutes]();
+
+          for (int k = 0; k < layers; k++)
+          {
+            for (int i = 0; i < (int)elements.size(); i++)
+            {
+              Element *element = elements[i];
+
+              for(int j = 0; j < totalCellsPerElement; j++)
+              {
+                ElementCell *elementCell = element->elementCells[j];
+
+                for (int m = 0; m < numSolutes; m++)
+                {
+                  if(elementCell->isBedCell)
+                  {
+                    output[j + i * totalCellsPerElement + m * totalCellsPerElement * elements.size()] = elementCell->bedCells[k]->soluteConcs[m].value;
+                  }
+                  else
+                  {
+                    output[j + i * totalCellsPerElement + m * totalCellsPerElement * elements.size()] = elementCell->soluteConcs[m].value;
+                  }
+                }
+              }
+            }
+            variable.putVar(std::vector<size_t>({currentTime, 0, 0, 0, (size_t)k}), std::vector<size_t>({1, (size_t)numSolutes, elements.size(), (size_t)totalCellsPerElement, 1}), output);
+          }
+
+          delete[] output;
+        }
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_solute_flux"] = varOnOff("element_channel_solute_flux")))
+    {
+      //hydraulics variables
+      ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
+                                                                            std::vector<std::string>({"time", "solutes", "elements"}));
+      elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
+      elementChannelSoluteFluxVar.putAtt("units", "kg/s");
+      m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_solute_flux"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+        Element *firstElement = elements[0];
+        int numSolutes = firstElement->model->m_numSolutes;
+
+        float* output = new float[elements.size() * numSolutes]();
+
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+
+          for (int k = 0; k < numSolutes; k++)
+          {
+            output[i  + k * elements.size()] = element->channelSoluteFlux[k];
+
+          }
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, (size_t)numSolutes, elements.size()}), output);
+
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_wse"] = varOnOff("element_channel_wse")))
+    {
+      ThreadSafeNcVar elementChannelWSEVar =  m_outputNetCDF->addVar("element_channel_wse", "float",
+                                                                     std::vector<std::string>({"time", "elements"}));
+      elementChannelWSEVar.putAtt("long_name", "Element Channel Water Surface Elevation");
+      elementChannelWSEVar.putAtt("units", "m");
+      m_outNetCDFVariables["element_channel_wse"] = elementChannelWSEVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_wse"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+
+        float* output = new float[elements.size()]();
 
 
-    ThreadSafeNcVar elementCellChannelHeatFluxVar =  m_outputNetCDF->addVar("element_cell_channel_heat_flux", "float",
-                                                                            std::vector<std::string>({"time", "elements","element_cells"}));
-    elementCellChannelHeatFluxVar.putAtt("long_name", "Element Cell Channel Heat Flux");
-    elementCellChannelHeatFluxVar.putAtt("units", "J/s");
-    m_outNetCDFVariables["element_cell_channel_heat_flux"] = elementCellChannelHeatFluxVar;
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelWSE;
+        }
+
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+        delete[] output;
+      };
+    }
+
+    if((m_outNetCDFVariablesOnOff["element_channel_flow_top_width"] = varOnOff("element_channel_flow_top_width")))
+    {
+      ThreadSafeNcVar elementChannelFlowWidthVar =  m_outputNetCDF->addVar("element_channel_flow_top_width", "float",
+                                                                           std::vector<std::string>({"time", "elements"}));
+      elementChannelFlowWidthVar.putAtt("long_name", "Element Channel Flow Top Width");
+      elementChannelFlowWidthVar.putAtt("units", "m");
+      m_outNetCDFVariables["element_channel_flow_top_width"] = elementChannelFlowWidthVar;
+      m_outNetCDFVariablesIOFunctions["element_channel_flow_top_width"] = [](size_t currentTime, ThreadSafeNcVar &variable, const std::vector<Element*>& elements)
+      {
+
+        float* output = new float[elements.size()]();
 
 
-    ThreadSafeNcVar elementChannelWSEVar =  m_outputNetCDF->addVar("element_channel_wse", "float",
-                                                                   std::vector<std::string>({"time", "elements"}));
-    elementChannelWSEVar.putAtt("long_name", "Element Channel Water Surface Elevation");
-    elementChannelWSEVar.putAtt("units", "m");
-    m_outNetCDFVariables["element_channel_wse"] = elementChannelWSEVar;
+        for (int i = 0; i < (int)elements.size(); i++)
+        {
+          Element *element = elements[i];
+          output[i] = element->channelWidth;
+        }
 
+        variable.putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, elements.size()}), output);
+        delete[] output;
+      };
+    }
 
-    ThreadSafeNcVar elementChannelFlowWidthVar =  m_outputNetCDF->addVar("element_channel_flow_top_width", "float",
-                                                                         std::vector<std::string>({"time", "elements"}));
-    elementChannelFlowWidthVar.putAtt("long_name", "Element Channel Flow Top Width");
-    elementChannelFlowWidthVar.putAtt("units", "m");
-    m_outNetCDFVariables["element_channel_flow_top_width"] = elementChannelFlowWidthVar;
+    m_optionalOutputVariables.clear();
+    m_optionalOutputVariables.reserve(m_outNetCDFVariablesOnOff.size());
 
+    for (const auto& pair : m_outNetCDFVariablesOnOff)
+    {
+      if(pair.second && (m_outNetCDFVariablesIOFunctions.find(pair.first) != m_outNetCDFVariablesIOFunctions.end()))
+        m_optionalOutputVariables.push_back(pair.first);
+    }
 
-    ThreadSafeNcVar solutesVar =  m_outputNetCDF->addVar("solute_concentration", "float",
-                                                         std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
-    solutesVar.putAtt("long_name", "Solute Concentration");
-    solutesVar.putAtt("units", "kg/m^3");
-    m_outNetCDFVariables["solute_concentration"] = solutesVar;
-
-    ThreadSafeNcVar elementCellFaceSoluteFlowVar =  m_outputNetCDF->addVar("element_cell_face_solute_flow", "float",
-                                                                     std::vector<std::string>({"time","solutes", "elements","element_cells","element_cell_face"}));
-    elementCellFaceSoluteFlowVar.putAtt("long_name", "Element Cell Face Solute Flow");
-    elementCellFaceSoluteFlowVar.putAtt("units", "kg/s");
-    m_outNetCDFVariables["element_cell_face_solute_flow"] = elementCellFaceSoluteFlowVar;
-
-
-    ThreadSafeNcVar elementCellChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_cell_channel_solute_flux", "float",
-                                                                              std::vector<std::string>({"time", "solutes", "elements", "element_cells"}));
-    elementCellChannelSoluteFluxVar.putAtt("long_name", "Cell Channel Solute Flux");
-    elementCellChannelSoluteFluxVar.putAtt("units", "kg/s");
-    m_outNetCDFVariables["element_cell_channel_solute_flux"] = elementCellChannelSoluteFluxVar;
-
-    ThreadSafeNcVar elementChannelSoluteFluxVar =  m_outputNetCDF->addVar("element_channel_solute_flux", "float",
-                                                                          std::vector<std::string>({"time", "solutes", "elements"}));
-    elementChannelSoluteFluxVar.putAtt("long_name", "Channel Solute Flux");
-    elementChannelSoluteFluxVar.putAtt("units", "kg/s");
-    m_outNetCDFVariables["element_channel_solute_flux"] = elementChannelSoluteFluxVar;
 
     m_outputNetCDF->sync();
 
@@ -909,6 +1715,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
                 {
                   m_odeSolver->setSolverType(ODESolver::CVODE_ADAMS);
                   m_odeSolver->setSolverIterationMethod(ODESolver::IterationMethod::FUNCTIONAL);
+                  m_odeSolver->setLinearSolverType(ODESolver::LinearSolverType::GMRES);
                 }
                 break;
               case 4:
@@ -1173,7 +1980,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           if (options.size() == 2)
           {
             bool ok;
-            m_specificStorage = options[1].toDouble(&ok);
+            m_specificYield = options[1].toDouble(&ok);
             foundError = !ok;
           }
           else
@@ -1183,7 +1990,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
 
           if (foundError)
           {
-            errorMessage = "Default specific storage";
+            errorMessage = "Default specific yield";
             return false;
           }
         }
@@ -1198,7 +2005,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             m_numLeftCellsPerElement = options[1].toDouble(&ok);
             foundError = !ok || m_numLeftCellsPerElement < 0;
 
-            m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement;
+            m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement + 2;
           }
           else
           {
@@ -1222,7 +2029,7 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
             m_numRightCellsPerElement = options[1].toDouble(&ok);
             foundError = !ok || m_numRightCellsPerElement < 0;
 
-            m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement;
+            m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement + 2;
           }
           else
           {
@@ -1632,6 +2439,63 @@ bool GWModel::readInputFileOptionTag(const QString &line, QString &errorMessage)
           }
         }
         break;
+      case 38:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+
+            bool ok;
+            m_numBedZCells = (int)options[1].toDouble(&ok);
+
+            m_numBedZCells = max(1, m_numBedZCells);
+
+            m_zcellFactors.clear();
+
+            double dz = 1.0 / (m_numBedZCells * 1.0);
+
+            for(int t = 0 ; t < m_numBedZCells; t++)
+            {
+              m_zcellFactors.push_back(dz);
+            }
+
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Num z cells";
+            return false;
+          }
+        }
+        break;
+      case 39:
+        {
+          bool foundError = false;
+
+          if (options.size() == 2)
+          {
+            bool ok;
+            m_specificStorage = options[1].toDouble(&ok);
+            foundError = !ok;
+          }
+          else
+          {
+            foundError = true;
+          }
+
+          if (foundError)
+          {
+            errorMessage = "Default specific storage";
+            return false;
+          }
+        }
+        break;
     }
   }
 
@@ -1828,7 +2692,7 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
         {
           ElementCell *elementCell = element->elementCells[j];
           elementCell->hydHead.value = elementCell->prevHydHead.value = hydHead;
-          elementCell->bedRockElev = bottomEl;
+          elementCell->bedRockElev = elementCell->bottomElev = bottomEl;
           elementCell->topElev = topEl;
         }
 
@@ -1868,7 +2732,7 @@ bool GWModel::readInputFileElementsTag(const QString &line, QString &errorMessag
           }
         }
 
-        if(columns.size() - currentColumn >= m_numSolutes * 2)
+        if(m_numSolutes > 0 && columns.size() - currentColumn >= m_numSolutes * 2)
         {
           int soluteIndex = 0;
 
@@ -1954,7 +2818,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
 {
   QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
-  if(options.size() ==  2 + m_numLeftCellsPerElement + m_numRightCellsPerElement)
+  if(options.size() ==  2 + m_totalCellsPerElement)
   {
     QString elementId = options[0].trimmed();
 
@@ -1990,7 +2854,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
         {
           case 1:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->hydHead.value = values[j];
                 element->elementCells[j]->prevHydHead.value = values[j];
@@ -1999,7 +2863,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 2:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->bedRockElev = values[j];
               }
@@ -2007,7 +2871,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 3:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->topElev = values[j];
               }
@@ -2015,7 +2879,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 4:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 ElementCell *n = element->elementCells[j];
                 n->hydCon[1] = values[j];
@@ -2024,7 +2888,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 5:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 ElementCell *n = element->elementCells[j];
                 n->hydCon[0] = values[j];
@@ -2033,15 +2897,15 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 6:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
-                element->elementCells[j]->specificStorage = values[j];
+                element->elementCells[j]->specificYield = values[j];
               }
             }
             break;
           case 7:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->porosity = values[j];
               }
@@ -2049,7 +2913,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 8:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->sedDensity = values[j];
               }
@@ -2057,7 +2921,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
             break;
           case 9:
             {
-              for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+              for(int j = 0; j < m_totalCellsPerElement; j++)
               {
                 element->elementCells[j]->sedCp = values[j];
               }
@@ -2074,7 +2938,7 @@ bool GWModel::readInputFileElementCellHydraulics(const QString &line, QString &e
   }
   else
   {
-    errorMessage = "Number of columes must be of size " + QString::number(2 + m_numLeftCellsPerElement + m_numRightCellsPerElement);
+    errorMessage = "Number of columes must be of size " + QString::number(2 + m_totalCellsPerElement);
     return false;
   }
 
@@ -2086,7 +2950,7 @@ bool GWModel::readInputFileElementCellInitConditions(const QString &line, QStrin
 {
   QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
 
-  if(options.size() ==  2 + m_numLeftCellsPerElement + m_numRightCellsPerElement)
+  if(options.size() ==  2 + m_totalCellsPerElement)
   {
     QString elementId = options[0].trimmed();
 
@@ -2115,7 +2979,7 @@ bool GWModel::readInputFileElementCellInitConditions(const QString &line, QStrin
 
       if(!variable.compare("Temperature", Qt::CaseInsensitive))
       {
-        for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+        for(int j = 0; j < m_totalCellsPerElement; j++)
         {
           element->elementCells[j]->hydHead.value = values[j];
           element->elementCells[j]->prevHydHead.value = values[j];
@@ -2129,7 +2993,7 @@ bool GWModel::readInputFileElementCellInitConditions(const QString &line, QStrin
 
           if(!variable.compare(solute, Qt::CaseInsensitive))
           {
-            for(int j = 0; j < m_numLeftCellsPerElement + m_numRightCellsPerElement; j++)
+            for(int j = 0; j < m_totalCellsPerElement; j++)
             {
               element->elementCells[j]->soluteConcs[k].value = values[j];
               element->elementCells[j]->prevSoluteConcs[k].value = values[j];
@@ -2147,7 +3011,7 @@ bool GWModel::readInputFileElementCellInitConditions(const QString &line, QStrin
   }
   else
   {
-    errorMessage = "Number of columes must be of size " + QString::number(2 + m_numLeftCellsPerElement + m_numRightCellsPerElement);
+    errorMessage = "Number of columes must be of size " + QString::number(2 + m_totalCellsPerElement);
     return false;
   }
 
@@ -2197,11 +3061,11 @@ bool GWModel::readInputFileElementCellBoundaryConditions(const QString &line, QS
                 bool oks;
                 bool oke;
 
-                int startCell = options[4].toInt(&oks);
-                int endCell = options[5].toInt(&oke);
+                int startCell = options[4].toDouble(&oks);
+                int endCell = options[5].toDouble(&oke);
 
                 if(oks && oke && endCell >= startCell &&
-                   startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+                   startCell >= 0 && endCell < m_totalCellsPerElement)
                 {
                   QString type = options[6];
 
@@ -2344,7 +3208,7 @@ bool GWModel::readInputFileElementCellSoluteBoundaryConditions(int variable, con
             int endCell = options[6].toInt(&oke);
 
             if(oks && oke && endCell >= startCell &&
-               startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+               startCell >= 0 && endCell < m_totalCellsPerElement)
             {
               QString type = options[7];
 
@@ -2484,7 +3348,7 @@ bool GWModel::readInputFileElementCellSources(const QString &line, QString &erro
               int endCell = options[4].toInt(&oke);
 
               if(oks && oke && endCell >= startCell &&
-                 startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+                 startCell >= 0 && endCell < m_totalCellsPerElement)
               {
 
                 auto geomMult = m_geomMultFlags.find(options[5].toStdString());
@@ -2613,7 +3477,7 @@ bool GWModel::readInputFileElementCellSources(const QString &line, QString &erro
                   int endCell = options[5].toInt(&oke);
 
                   if(oks && oke && endCell >= startCell &&
-                     startCell >= 0 && endCell < m_numLeftCellsPerElement + m_numRightCellsPerElement)
+                     startCell >= 0 && endCell < m_totalCellsPerElement)
                   {
 
                     auto geomMult = m_geomMultFlags.find(options[6].toStdString());
@@ -2974,6 +3838,42 @@ bool GWModel::readInputFileChannelBoundaryConditions(const QString &line, QStrin
   return true;
 }
 
+bool GWModel::readInputFileChannelZCellFactors(const QString &line, QString &errorMessage)
+{
+  QStringList options = line.split(m_delimiters, QString::SkipEmptyParts);
+
+  m_zcellFactors.clear();
+  double sumValue = 0;
+
+  for (const QString& number : options)
+  {
+    bool oks;
+    double value = number.toDouble(&oks);
+
+    if(oks)
+    {
+      m_zcellFactors.push_back(value);
+      sumValue += value;
+    }
+  }
+
+  if(m_zcellFactors.size() != m_numBedZCells)
+  {
+    printf("READ\n");
+    errorMessage = "Mismatch number of zcells";
+    return false;
+  }
+
+  if( abs(sumValue-1) > 1e-5)
+  {
+    errorMessage = "Sum value of" + QString::number(sumValue) + " not equal to 1.0";
+    printf("READ\n");
+    return false;
+  }
+
+  return true;
+}
+
 void GWModel::writeOutput()
 {
   m_currentflushToDiskCount++;
@@ -3003,165 +3903,280 @@ void GWModel::writeNetCDFOutput()
     //Set current dateTime
     m_outNetCDFVariables["time"].putVar(std::vector<size_t>({currentTime}), m_currentDateTime);
 
-    float *hydHead = new float[m_elements.size() * m_totalCellsPerElement];
-    float *dvolumedt = new float[m_elements.size() * m_totalCellsPerElement];
-    float *satDepth = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementInflow = new float[m_elements.size()]();
-    float *elementCellInflow = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementChannelInflow = new float[m_elements.size()]();
-    float *elementChannelInflowFlux = new float[m_elements.size()]();
-    float *elementCellChannelInflow = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementCellChannelInflowFlux = new float[m_elements.size() * m_totalCellsPerElement];
-    float *totalElementCellMassBal = new float[m_elements.size() * m_totalCellsPerElement];
-    float *edgeFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    float *edgeHeatFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    //    float *edgeFlux = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    //    float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
-    //    float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
-    //    float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
-    float *temperature = new float[m_elements.size() * m_totalCellsPerElement];
-    float *waterAge = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementHeatFlux = new float[m_elements.size()];
-    float *elementCellHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementChannelHeatFlux = new float[m_elements.size()]();
-    float *elementCellChannelHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
-    float *elementChannelWSE = new float[m_elements.size()];
-    float *elementChannelWidth = new float[m_elements.size()];
-    float *solutes = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement];
-    float *edgeSolutesFlow = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement * 4];
-    float *cellChannelSoluteFlux = new float[m_elements.size() * m_totalCellsPerElement * m_numSolutes];
-    float *channelSoluteFlux = new float[m_elements.size() * m_numSolutes];
 
-    //element_cell_face_flux
+    int nVars = static_cast<int>(m_optionalOutputVariables.size());
 
 #ifdef USE_OPENMP
-#pragma omp parallel for
+    //#pragma omp parallel for
 #endif
-    for (int i = 0; i < (int)m_elements.size(); i++)
+    for (int i = 0; i < nVars; i++)
     {
-      Element *element = m_elements[i];
-      elementChannelWSE[i] = element->channelWSE;
-      elementChannelWidth[i] = element->channelWidth;
-      elementChannelInflow[i] = element->channelInflow;
-      elementChannelInflowFlux[i] = element->channelInflowFlux;
-      elementChannelHeatFlux[i] = element->channelHeatFlux;
-
-      for(int j = 0; j < m_totalCellsPerElement; j++)
-      {
-        ElementCell *elementCell = element->elementCells[j];
-
-        hydHead[j + i * m_totalCellsPerElement] = elementCell->hydHead.value;
-        dvolumedt[j + i * m_totalCellsPerElement] = elementCell->dvolume_dt;
-        satDepth[j + i * m_totalCellsPerElement] = elementCell->depth;
-        elementInflow[i] += elementCell->externalInflow;
-        elementCellInflow[j + i * m_totalCellsPerElement] = elementCell->externalInflow;
-        elementCellChannelInflow[j + i * m_totalCellsPerElement] = elementCell->channelInflow;
-        elementCellChannelInflowFlux[j + i * m_totalCellsPerElement] = elementCell->channelInflowFlux;
-        totalElementCellMassBal[j + i * m_totalCellsPerElement] = elementCell->totalMassBalance;
-        temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
-        elementHeatFlux[i] += elementCell->externalHeatFluxes;
-        elementCellHeatFlux[j + i * m_totalCellsPerElement] = elementCell->externalHeatFluxes;
-        elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatRate;
-
-        for(int k = 0; k < 4; k++)
-        {
-          edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
-          edgeHeatFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeHeatFluxes[k] * dir[k];
-        }
-
-        for (int k = 0; k < m_numSolutes; k++)
-        {
-          solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
-          cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteRate[k];
-
-          for(int l = 0; l < 4; l++)
-          {
-            edgeSolutesFlow[ l + j * 4 + i * 4 * m_totalCellsPerElement + k * 4 * m_totalCellsPerElement * m_elements.size()] = elementCell->edgeSoluteConcFluxes[k][l] * dir[k];
-          }
-        }
-
-//        ThreadSafeNcVar elementCellFaceSoluteFlowVar =  m_outputNetCDF->addVar("element_cell_face_solute_flow", "float",
-//                                                                         std::vector<std::string>({"time","solutes", "elements","element_cells","element_cell_face"}));
-      }
-
-      for (int k = 0; k < m_numSolutes; k++)
-      {
-        channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteRate[k];
-      }
+      std::string varName = m_optionalOutputVariables[static_cast<size_t>(i)];
+      (m_outNetCDFVariablesIOFunctions[varName])(currentTime, m_outNetCDFVariables[varName], m_elements);
     }
 
-    //    size_t size = sizeof(float) * m_totalCellsPerElement;
-    m_outNetCDFVariables["hydraulic_head"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), hydHead);
-
-    m_outNetCDFVariables["dvolume_dt"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), dvolumedt);
-
-    m_outNetCDFVariables["saturated_depth"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), satDepth);
-
-    m_outNetCDFVariables["element_external_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementInflow);
-
-    m_outNetCDFVariables["element_cell_external_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellInflow);
-
-    m_outNetCDFVariables["element_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflow);
-
-    m_outNetCDFVariables["element_channel_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflowFlux);
-
-    m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflow);
-
-    m_outNetCDFVariables["element_cell_channel_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelInflowFlux);
-
-    m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), totalElementCellMassBal);
-
-    m_outNetCDFVariables["total_mass_balance"].putVar(std::vector<size_t>({currentTime}), std::vector<size_t>({1}), &m_totalMassBalance);
-
-    m_outNetCDFVariables["element_cell_face_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeFlow);
-
-    m_outNetCDFVariables["temperature"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), temperature);
-
-    m_outNetCDFVariables["element_cell_face_heat_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeHeatFlow);
-
-    m_outNetCDFVariables["element_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementHeatFlux);
-
-    m_outNetCDFVariables["element_cell_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellHeatFlux);
-
-    m_outNetCDFVariables["element_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelHeatFlux);
-
-    m_outNetCDFVariables["element_cell_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), elementCellChannelHeatFlux);
-
-    m_outNetCDFVariables["element_channel_wse"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWSE);
-
-    m_outNetCDFVariables["element_channel_flow_top_width"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWidth);
 
 
-    if(m_numSolutes)
-    {
-      m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement}), solutes);
+    //    float *hydHead = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *dvolumedt = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *satDepth = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementInflow = new float[m_elements.size()]();
+    //    float *elementCellInflow = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementChannelInflow = new float[m_elements.size()]();
+    //    float *elementChannelInflowFlux = new float[m_elements.size()]();
+    //    float *elementCellChannelInflow = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementCellChannelInflowFlux = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *totalElementCellMassBal = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *edgeFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    float *edgeHeatFlow = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    //    float *edgeFlux = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    //    float *edgeSupVel = new float[m_elements.size() * m_totalCellsPerElement * 4];
+    //    //    float *cellSupVelX = new float[m_elements.size() * m_totalCellsPerElement];
+    //    //    float *cellSupVelY = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *temperature = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *waterAge = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementHeatFlux = new float[m_elements.size()];
+    //    float *elementCellHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementChannelHeatFlux = new float[m_elements.size()]();
+    //    float *elementCellChannelHeatFlux = new float[m_elements.size() * m_totalCellsPerElement];
+    //    float *elementChannelWSE = new float[m_elements.size()];
+    //    float *elementChannelWidth = new float[m_elements.size()];
+    //    float *solutes = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement];
+    //    float *edgeSolutesFlow = new float[m_elements.size() * m_numSolutes * m_totalCellsPerElement * 4];
+    //    float *cellChannelSoluteFlux = new float[m_elements.size() * m_totalCellsPerElement * m_numSolutes];
+    //    float *channelSoluteFlux = new float[m_elements.size() * m_numSolutes];
 
-      m_outNetCDFVariables["element_cell_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement}), cellChannelSoluteFlux);
+    //#ifdef USE_OPENMP
+    //#pragma omp parallel for
+    //#endif
+    //    for (int i = 0; i < (int)m_elements.size(); i++)
+    //    {
+    //      Element *element = m_elements[i];
+    //      elementChannelWSE[i] = element->channelWSE;
+    //      elementChannelWidth[i] = element->channelWidth;
+    //      elementChannelInflow[i] = element->channelInflow;
+    //      elementChannelInflowFlux[i] = element->channelInflowFlux;
+    //      elementChannelHeatFlux[i] = element->channelHeatFlux;
 
-      m_outNetCDFVariables["element_cell_face_solute_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 4}), edgeSolutesFlow);
+    //      for(int j = 0; j < m_totalCellsPerElement; j++)
+    //      {
+    //        ElementCell *elementCell = element->elementCells[j];
 
-      m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size()}), channelSoluteFlux);
-    }
+    //        hydHead[j + i * m_totalCellsPerElement] = elementCell->hydHead.value;
+    //        dvolumedt[j + i * m_totalCellsPerElement] = elementCell->dvolume_dt;
+    //        satDepth[j + i * m_totalCellsPerElement] = elementCell->hydHead.value - elementCell->bedRockElev;
+    //        elementInflow[i] += elementCell->externalInflow;
+    //        elementCellInflow[j + i * m_totalCellsPerElement] = elementCell->externalInflow;
+    //        elementCellChannelInflow[j + i * m_totalCellsPerElement] = elementCell->channelInflow;
+    //        elementCellChannelInflowFlux[j + i * m_totalCellsPerElement] = elementCell->channelInflowFlux;
+    //        totalElementCellMassBal[j + i * m_totalCellsPerElement] = elementCell->totalMassBalance;
+    //        temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
+    //        elementHeatFlux[i] += elementCell->externalHeatFluxes;
+    //        elementCellHeatFlux[j + i * m_totalCellsPerElement] = elementCell->externalHeatFluxes;
+    //        elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatRate;
 
-    if(m_simulateWaterAge)
-    {
+    //        for(int k = 0; k < 4; k++)
+    //        {
+    //          edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
+    //          edgeHeatFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeHeatFluxes[k] * dir[k];
+    //        }
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
-      for (int i = 0; i < (int)m_elements.size(); i++)
-      {
-        Element *element = m_elements[i];
+    //        for (int k = 0; k < m_numSolutes; k++)
+    //        {
+    //          solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
+    //          cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteRate[k];
 
-        for(int j = 0; j < m_totalCellsPerElement; j++)
-        {
-          ElementCell *elementCell = element->elementCells[j];
-          waterAge[j + i * m_totalCellsPerElement] = elementCell->soluteConcs[m_numSolutes].value;
-        }
-      }
+    //          for(int l = 0; l < 4; l++)
+    //          {
+    //            edgeSolutesFlow[ l + j * 4 + i * 4 * m_totalCellsPerElement + k * 4 * m_totalCellsPerElement * m_elements.size()] = elementCell->edgeSoluteConcFluxes[k][l] * dir[k];
+    //          }
+    //        }
+    //      }
 
-      m_outNetCDFVariables["water_age"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement}), waterAge);
-    }
+    //      for (int k = 0; k < m_numSolutes; k++)
+    //      {
+    //        channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteRate[k];
+    //      }
+    //    }
+
+    //    m_outNetCDFVariables["hydraulic_head"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), hydHead);
+
+    //    m_outNetCDFVariables["dvolume_dt"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), dvolumedt);
+
+    //    m_outNetCDFVariables["saturated_depth"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), satDepth);
+
+    //    m_outNetCDFVariables["element_external_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementInflow);
+
+    //    m_outNetCDFVariables["element_cell_external_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellInflow);
+
+    //    m_outNetCDFVariables["element_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflow);
+
+    //    m_outNetCDFVariables["element_channel_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelInflowFlux);
+
+    //    m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelInflow);
+
+    //    m_outNetCDFVariables["element_cell_channel_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelInflowFlux);
+
+    //    m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), totalElementCellMassBal);
+
+    //    m_outNetCDFVariables["total_mass_balance"].putVar(std::vector<size_t>({currentTime}), std::vector<size_t>({1}), &m_totalMassBalance);
+
+    //    m_outNetCDFVariables["element_cell_face_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4, 1}), edgeFlow);
+
+    //    m_outNetCDFVariables["temperature"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), temperature);
+
+    //    m_outNetCDFVariables["element_cell_face_heat_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4, 1}), edgeHeatFlow);
+
+    //    m_outNetCDFVariables["element_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementHeatFlux);
+
+    //    m_outNetCDFVariables["element_cell_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellHeatFlux);
+
+    //    m_outNetCDFVariables["element_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelHeatFlux);
+
+    //    m_outNetCDFVariables["element_cell_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelHeatFlux);
+
+    //    m_outNetCDFVariables["element_channel_wse"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWSE);
+
+    //    m_outNetCDFVariables["element_channel_flow_top_width"].putVar(std::vector<size_t>({currentTime, 0}), std::vector<size_t>({1, m_elements.size()}), elementChannelWidth);
+
+
+    //    if(m_numSolutes)
+    //    {
+    //      m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), solutes);
+
+    //      m_outNetCDFVariables["element_cell_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), cellChannelSoluteFlux);
+
+    //      m_outNetCDFVariables["element_cell_face_solute_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), edgeSolutesFlow);
+
+    //      m_outNetCDFVariables["element_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size()}), channelSoluteFlux);
+    //    }
+
+    //    if(m_simulateWaterAge)
+    //    {
+
+    //#ifdef USE_OPENMP
+    //#pragma omp parallel for
+    //#endif
+    //      for (int i = 0; i < (int)m_elements.size(); i++)
+    //      {
+    //        Element *element = m_elements[i];
+
+    //        for(int j = 0; j < m_totalCellsPerElement; j++)
+    //        {
+    //          ElementCell *elementCell = element->elementCells[j];
+    //          waterAge[j + i * m_totalCellsPerElement] = elementCell->soluteConcs[m_numSolutes].value;
+    //        }
+    //      }
+
+    //      m_outNetCDFVariables["water_age"].putVar(std::vector<size_t>({currentTime, 0, 0, 0}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), waterAge);
+    //    }
+
+
+    //    for(size_t ff = 1; ff < m_numBedZCells; ff++)
+    //    {
+
+    //      for (int i = 0; i < (int)m_elements.size(); i++)
+    //      {
+    //        Element *element = m_elements[i];
+
+    //        int j =  m_numLeftCellsPerElement;
+    //        for(int j = 0; j < m_totalCellsPerElement; j++)
+    //        {
+    //          ElementCell *elementCell = element->elementCells[j];
+    //          elementCell = elementCell->bedCells[ff];
+
+    //          hydHead[j + i * m_totalCellsPerElement] = elementCell->hydHead.value;
+    //          dvolumedt[j + i * m_totalCellsPerElement] = elementCell->dvolume_dt;
+    //          satDepth[j + i * m_totalCellsPerElement] = elementCell->hydHead.value - elementCell->bedRockElev;
+    //          elementInflow[i] += elementCell->externalInflow;
+    //          elementCellInflow[j + i * m_totalCellsPerElement] = elementCell->externalInflow;
+    //          elementCellChannelInflow[j + i * m_totalCellsPerElement] = elementCell->channelInflow;
+    //          elementCellChannelInflowFlux[j + i * m_totalCellsPerElement] = elementCell->channelInflowFlux;
+    //          totalElementCellMassBal[j + i * m_totalCellsPerElement] = elementCell->totalMassBalance;
+    //          temperature[j + i * m_totalCellsPerElement] = elementCell->temperature.value;
+    //          elementHeatFlux[i] += elementCell->externalHeatFluxes;
+    //          elementCellHeatFlux[j + i * m_totalCellsPerElement] = elementCell->externalHeatFluxes;
+    //          elementCellChannelHeatFlux[j + i * m_totalCellsPerElement] = elementCell->channelHeatRate;
+
+    //          for(int k = 0; k < 4; k++)
+    //          {
+    //            edgeFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeFlows[k] * dir[k];
+    //            edgeHeatFlow[k + j * 4 + i * 4 * m_totalCellsPerElement] = elementCell->edgeHeatFluxes[k] * dir[k];
+    //          }
+
+    //          for (int k = 0; k < m_numSolutes; k++)
+    //          {
+    //            solutes[j + i * m_totalCellsPerElement + k * m_totalCellsPerElement * m_elements.size()] = elementCell->soluteConcs[k].value;
+    //            cellChannelSoluteFlux[j + i * m_totalCellsPerElement + k * m_elements.size() * m_totalCellsPerElement] = elementCell->channelSoluteRate[k];
+
+    //            for(int l = 0; l < 4; l++)
+    //            {
+    //              edgeSolutesFlow[ l + j * 4 + i * 4 * m_totalCellsPerElement + k * 4 * m_totalCellsPerElement * m_elements.size()] = elementCell->edgeSoluteConcFluxes[k][l] * dir[k];
+    //            }
+    //          }
+    //        }
+
+    //        for (int k = 0; k < m_numSolutes; k++)
+    //        {
+    //          channelSoluteFlux[i  + k * m_elements.size()] = element->channelSoluteRate[k];
+    //        }
+    //      }
+
+    //      m_outNetCDFVariables["hydraulic_head"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), hydHead);
+
+    //      m_outNetCDFVariables["dvolume_dt"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), dvolumedt);
+
+    //      m_outNetCDFVariables["saturated_depth"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), satDepth);
+
+    //      m_outNetCDFVariables["element_cell_external_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellInflow);
+
+    //      m_outNetCDFVariables["element_cell_channel_inflow"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelInflow);
+
+    //      m_outNetCDFVariables["element_cell_channel_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelInflowFlux);
+
+    //      m_outNetCDFVariables["total_element_cell_mass_balance"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), totalElementCellMassBal);
+
+    //      m_outNetCDFVariables["element_cell_face_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4, 1}), edgeFlow);
+
+    //      m_outNetCDFVariables["temperature"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), temperature);
+
+    //      m_outNetCDFVariables["element_cell_face_heat_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 4, 1}), edgeHeatFlow);
+
+    //      m_outNetCDFVariables["element_cell_external_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellHeatFlux);
+
+    //      m_outNetCDFVariables["element_cell_channel_heat_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), elementCellChannelHeatFlux);
+
+    //      if(m_numSolutes)
+    //      {
+    //        m_outNetCDFVariables["solute_concentration"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, ff}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), solutes);
+
+    //        m_outNetCDFVariables["element_cell_channel_solute_flux"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, ff}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), cellChannelSoluteFlux);
+
+    //        m_outNetCDFVariables["element_cell_face_solute_flow"].putVar(std::vector<size_t>({currentTime, 0, 0, 0, ff}), std::vector<size_t>({1, (size_t)m_numSolutes, m_elements.size(), (size_t)m_totalCellsPerElement, 4, 1}), edgeSolutesFlow);
+
+    //      }
+
+    //      if(m_simulateWaterAge)
+    //      {
+
+    //#ifdef USE_OPENMP
+    //#pragma omp parallel for
+    //#endif
+    //        for (int i = 0; i < (int)m_elements.size(); i++)
+    //        {
+    //          Element *element = m_elements[i];
+
+    //          for(int j = 0; j < m_totalCellsPerElement; j++)
+    //          {
+    //            ElementCell *elementCell = element->elementCells[j];
+    //            waterAge[j + i * m_totalCellsPerElement] = elementCell->soluteConcs[m_numSolutes].value;
+    //          }
+    //        }
+
+    //        m_outNetCDFVariables["water_age"].putVar(std::vector<size_t>({currentTime, 0, 0, ff}), std::vector<size_t>({1, m_elements.size(), (size_t)m_totalCellsPerElement, 1}), waterAge);
+    //      }
+
+    //    }
 
     if(m_flushToDisk)
     {
@@ -3169,30 +4184,30 @@ void GWModel::writeNetCDFOutput()
     }
 
 
-    delete[] hydHead;
-    delete[] dvolumedt;
-    delete[] satDepth;
-    delete[] elementInflow;
-    delete[] elementCellInflow;
-    delete[] elementChannelInflow;
-    delete[] elementChannelInflowFlux;
-    delete[] elementCellChannelInflow;
-    delete[] elementCellChannelInflowFlux;
-    delete[] totalElementCellMassBal;
-    delete[] edgeFlow;
-    delete[] temperature;
-    delete[] edgeHeatFlow;
-    delete[] waterAge;
-    delete[] elementHeatFlux;
-    delete[] elementCellHeatFlux;
-    delete[] elementChannelHeatFlux;
-    delete[] elementCellChannelHeatFlux;
-    delete[] elementChannelWSE;
-    delete[] elementChannelWidth;
-    delete[] solutes;
-    delete[] edgeSolutesFlow;
-    delete[] cellChannelSoluteFlux;
-    delete[] channelSoluteFlux;
+    //    delete[] hydHead;
+    //    delete[] dvolumedt;
+    //    delete[] satDepth;
+    //    delete[] elementInflow;
+    //    delete[] elementCellInflow;
+    //    delete[] elementChannelInflow;
+    //    delete[] elementChannelInflowFlux;
+    //    delete[] elementCellChannelInflow;
+    //    delete[] elementCellChannelInflowFlux;
+    //    delete[] totalElementCellMassBal;
+    //    delete[] edgeFlow;
+    //    delete[] temperature;
+    //    delete[] edgeHeatFlow;
+    //    delete[] waterAge;
+    //    delete[] elementHeatFlux;
+    //    delete[] elementCellHeatFlux;
+    //    delete[] elementChannelHeatFlux;
+    //    delete[] elementCellChannelHeatFlux;
+    //    delete[] elementChannelWSE;
+    //    delete[] elementChannelWidth;
+    //    delete[] solutes;
+    //    delete[] edgeSolutesFlow;
+    //    delete[] cellChannelSoluteFlux;
+    //    delete[] channelSoluteFlux;
   }
 
 #endif
@@ -3249,7 +4264,8 @@ const unordered_map<string, int> GWModel::m_inputFileFlags({
                                                              {"[BOUNDARY_CONDITIONS]", 9},
                                                              {"[TIMESERIES]", 10},
                                                              {"[SOURCES]", 11},
-                                                             {"[CHANNEL_BOUNDARY_CONDITIONS]", 12}
+                                                             {"[CHANNEL_BOUNDARY_CONDITIONS]", 12},
+                                                             {"[ZCELLFACTORS]", 13}
                                                            });
 
 const unordered_map<std::string, int> GWModel::m_hydraulicVariableFlags({
@@ -3288,7 +4304,7 @@ const unordered_map<string, int> GWModel::m_optionsFlags({
                                                            {"DEFAULT_POROSITY", 17},
                                                            {"DEFAULT_HYD_COND_X", 18},
                                                            {"DEFAULT_HYD_COND_Y", 19},
-                                                           {"DEFAULT_SPECIFIC_STORAGE", 20},
+                                                           {"DEFAULT_SPECIFIC_YIELD", 20},
                                                            {"NUM_LEFT_CELLS", 21},
                                                            {"NUM_RIGHT_CELLS", 22},
                                                            {"NUM_SOLUTES", 23},
@@ -3306,6 +4322,8 @@ const unordered_map<string, int> GWModel::m_optionsFlags({
                                                            {"LINEAR_SOLVER", 35},
                                                            {"SIMULATE_WATER_AGE", 36},
                                                            {"DISPERSIVITY_Z", 37},
+                                                           {"NUMBEDZCELLS", 38},
+                                                           {"DEFAULT_SPECIFIC_STORAGE", 39},
                                                          });
 
 const unordered_map<string, int> GWModel::m_advectionFlags({
@@ -3345,7 +4363,6 @@ const unordered_map<string, int> GWModel::m_chanVarFlags({
                                                            {"TEMPERATURE", 3},
                                                            {"SOLUTE", 4},
                                                          });
-
 
 const unordered_map<string, int> GWModel::m_edgeFlags({
                                                         {"RIGHT", 0},

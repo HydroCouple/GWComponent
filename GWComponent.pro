@@ -55,7 +55,8 @@ HEADERS += ./include/stdafx.h\
            ./include/channelbc.h \
            ./include/elementinput.h \
            ./include/elementoutput.h \
-    include/elementcelladvupwind.h
+           ./include/elementcell.h \
+           ./include/elementcelladvupwind.h
 
 SOURCES +=./src/stdafx.cpp \
           ./src/gwcomponent.cpp \
@@ -265,7 +266,7 @@ CONFIG(debug, debug|release) {
     }
 
     macx {
-       QMAKE_CXXFLAGS += -O3
+       QMAKE_CXXFLAGS += -O1
     }
 
     linux {

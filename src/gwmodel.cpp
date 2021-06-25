@@ -20,6 +20,7 @@
 #include "gwmodel.h"
 #include "elementjunction.h"
 #include "element.h"
+#include "elementcell.h"
 #include "iboundarycondition.h"
 
 using namespace  std;
@@ -51,7 +52,7 @@ GWModel::GWModel(GWComponent *component)
     m_sedCp(2758),
     m_hydConX(0.0),
     m_hydConY(0.0),
-    m_specificStorage(0.3),
+    m_specificYield(0.3),
     m_porosity(0.3),
     m_defaultCellWidth(1.0),
     #ifdef   USE_NETCDF
@@ -543,7 +544,7 @@ bool GWModel::initializeTimeVariables(std::list<string> &errors)
 bool GWModel::initializeElements(std::list<string> &errors)
 {
 
-  m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement;
+  m_totalCellsPerElement = m_numLeftCellsPerElement + m_numRightCellsPerElement + 2;
 
   for(int i = 0 ; i < (int)m_elementJunctions.size()  ; i++)
   {
@@ -559,12 +560,22 @@ bool GWModel::initializeElements(std::list<string> &errors)
     element->index = i;
     double runningY = 0.0;
 
-    for(int j = 0; j < m_totalCellsPerElement; j++)
-    {
-      ElementCell *elementCell = element->elementCells[j];
-      elementCell->index  = bfsIndex;// i * m_totalCellsPerElement + j;
-      bfsIndex++;
-    }
+
+    //set central cell
+    ElementCell *central_one = element->elementCells[m_numLeftCellsPerElement];
+    central_one->centerY = -central_one->width / 2.0;
+    central_one->topBedCell = central_one;
+    central_one->isBedCell = true;
+    central_one->initializeBedCells();
+
+    ElementCell *central_two = element->elementCells[m_numLeftCellsPerElement + 1];
+    central_two->centerY = central_two->width / 2.0;
+    central_two->topBedCell = central_two;
+    central_two->isBedCell = true;
+    central_two->initializeBedCells();
+
+
+    runningY = -central_one->width;
 
     for(int f = m_numLeftCellsPerElement - 1; f > -1; f--)
     {
@@ -573,13 +584,28 @@ bool GWModel::initializeElements(std::list<string> &errors)
       elementCell->centerY  = runningY + elementCell->width / 2.0;
     }
 
-    runningY = 0.0;
+    runningY = central_two->width;
 
-    for(int f = m_numLeftCellsPerElement; f < m_totalCellsPerElement; f++)
+    for(int f = m_numLeftCellsPerElement + 2; f < m_totalCellsPerElement; f++)
     {
       ElementCell *elementCell = element->elementCells[f];
       runningY += elementCell->width;
       elementCell->centerY  = runningY - elementCell->width / 2.0;
+    }
+
+    for(int j = 0; j < m_totalCellsPerElement; j++)
+    {
+      ElementCell *elementCell = element->elementCells[j];
+      elementCell->index  = bfsIndex; bfsIndex++;
+
+      if(elementCell->isBedCell)
+      {
+        for(int f = 1 ; f < m_numBedZCells; f++)
+        {
+          ElementCell *bcell = elementCell->bedCells[f];
+          bcell->index = bfsIndex; bfsIndex ++;
+        }
+      }
     }
   }
 
@@ -587,18 +613,22 @@ bool GWModel::initializeElements(std::list<string> &errors)
   {
     Element *element = m_elements[i];
     element->initialize();
-  }
 
-  //  ElementCell *startCell = m_elements[0]->elementCells[0];
-  //  startCell->index = bfsIndex;
-  //  breadthFirstSearchSetIndex(startCell, bfsIndex);
+    if (i == 0)
+    {
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+      }
+    }
+  }
 
   return true;
 }
 
 bool GWModel::initializeSolvers(std::list<string> &errors)
 {
-  int totalCells =  m_elements.size() * m_totalCellsPerElement;
+  int totalCells =  m_elements.size() * m_totalCellsPerElement + 2 * m_elements.size() * (m_numBedZCells - 1);
   int totalSize = totalCells;
 
   if(m_solveHeatTransport)

@@ -1,8 +1,9 @@
 #include "stdafx.h"
-#include "elementcellsourcebc.h".h"
+#include "elementcellsourcebc.h"
 #include "gwmodel.h"
 #include "temporal/timeseries.h"
 #include "element.h"
+#include "elementcell.h"
 #include "core/datacursor.h"
 
 ElementCellSourceBC::ElementCellSourceBC(Variable variable,

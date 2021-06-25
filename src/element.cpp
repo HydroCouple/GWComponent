@@ -19,6 +19,7 @@
 
 #include "stdafx.h"
 #include "element.h"
+#include "elementcell.h"
 #include "elementjunction.h"
 #include "gwmodel.h"
 
@@ -49,8 +50,8 @@ Element::Element(const std::string &id, ElementJunction *upstream, ElementJuncti
 Element::~Element()
 {
 
-  for(ElementCell *cell : elementCells)
-    delete cell;
+  for(size_t i = 0; i < elementCells.size(); i++)
+    delete elementCells[i];
 
   elementCells.clear();
 
@@ -67,7 +68,7 @@ Element::~Element()
 
 void Element::initialize()
 {
-  channelTemperature = 0;
+//  channelTemperature = 0;
 
   setUpstreamElement();
   setDownStreamElement();
@@ -78,7 +79,17 @@ void Element::initialize()
 
   for(int i = 0; i < model->m_totalCellsPerElement; i++)
   {
-    elementCells[i]->initialize();
+    ElementCell *elementCell = elementCells[i];
+    elementCell->initialize();
+
+    if(elementCell->isBedCell)
+    {
+      for(int j = 1 ; j < model->m_numBedZCells; j++)
+      {
+        ElementCell *telementCell = elementCell->bedCells[j];
+        telementCell->initialize();
+      }
+    }
   }
 }
 
@@ -92,6 +103,7 @@ void Element::initializeElementCells()
   for(int i = 0; i < model->m_totalCellsPerElement; i++)
   {
     ElementCell *cell = new ElementCell(i, this);
+    cell->isBedCell = false;
     elementCells.push_back(cell);
   }
 }
@@ -99,6 +111,7 @@ void Element::initializeElementCells()
 void Element::computeChannelMassFlux()
 {
   channelInflow = 0;
+
 
   for(int j = 0; j < model->m_totalCellsPerElement; j++)
   {

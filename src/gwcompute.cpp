@@ -2,6 +2,7 @@
 #include "gwmodel.h"
 #include "iboundarycondition.h"
 #include "element.h"
+#include "elementcell.h"
 
 using namespace std;
 
@@ -97,6 +98,43 @@ void GWModel::prepareForNextTimeStep()
         m_minSolute[j] = min(m_minSolute[j] , elementCell->soluteConcs[j].value);
         m_maxSolute[j] = max(m_maxSolute[j] , elementCell->soluteConcs[j].value);
       }
+
+      if(elementCell->isBedCell)
+      {
+        for(int m = 1; m < m_numBedZCells; m++)
+        {
+          ElementCell *telementCell = elementCell->bedCells[m];
+
+          telementCell->computeMassBalance(m_timeStep);
+          m_totalMassBalance += telementCell->totalMassBalance;
+
+          telementCell->computeHeatBalance(m_timeStep);
+          m_totalHeatBalance += telementCell->totalHeatBalance;
+
+          m_totalExternalHeatBalance += telementCell->totalExternalHeatBalance;
+
+
+          telementCell->prevHydHead.copy(telementCell->hydHead);
+          telementCell->prevTemperature.copy(telementCell->temperature);
+
+          m_minTemp = min(m_minTemp , telementCell->temperature.value);
+          m_maxTemp = max(m_maxTemp , telementCell->temperature.value);
+
+          m_minHead = min(m_minHead , telementCell->hydHead.value);
+          m_maxHead = max(m_maxHead , telementCell->hydHead.value);
+
+          for(size_t j = 0; j < m_solutes.size(); j++)
+          {
+            telementCell->computeSoluteBalance(m_timeStep, j);
+            m_totalSoluteMassBalance[j] += telementCell->totalSoluteMassBalance[j];
+
+            telementCell->prevSoluteConcs[j].copy(telementCell->soluteConcs[j]);
+
+            m_minSolute[j] = min(m_minSolute[j] , telementCell->soluteConcs[j].value);
+            m_maxSolute[j] = max(m_maxSolute[j] , telementCell->soluteConcs[j].value);
+          }
+        }
+      }
     }
   }
 }
@@ -142,7 +180,7 @@ void GWModel::applyBoundaryConditions(double dateTime)
       Element *element = m_elements[i];
 
 #ifdef USE_OPENMMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
       for(int j = 0; j < (int)element->elementCells.size(); j++)
       {
@@ -155,13 +193,30 @@ void GWModel::applyBoundaryConditions(double dateTime)
         {
           elementCell->externalSoluteFluxes[k] = 0.0;
         }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            telementCell->externalInflow = 0.0;
+            telementCell->externalHeatFluxes = 0.0;
+            telementCell->externalSoluteFluxes[m_numSolutes] = telementCell->volume / 86400.0;
+
+            for(int k = 0; k < m_numSolutes; k++)
+            {
+              telementCell->externalSoluteFluxes[k] = 0.0;
+            }
+          }
+        }
       }
     }
   }
   else
   {
 #ifdef USE_OPENMMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
     for(int i = 0 ; i < (int)m_elements.size(); i++)
     {
@@ -180,12 +235,28 @@ void GWModel::applyBoundaryConditions(double dateTime)
         {
           elementCell->externalSoluteFluxes[k] = 0.0;
         }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            telementCell->externalInflow = 0.0;
+            telementCell->externalHeatFluxes = 0.0;
+
+            for(int k = 0; k < m_numSolutes; k++)
+            {
+              telementCell->externalSoluteFluxes[k] = 0.0;
+            }
+          }
+        }
       }
     }
   }
 
 #ifdef USE_OPENMMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
   for(size_t i = 0; i < m_boundaryConditions.size() ; i++)
   {
@@ -272,6 +343,15 @@ void GWModel::calculatePreComputedHydHeadVariables()
     {
       ElementCell *elementCell = element->elementCells[j];
       elementCell->calculatePreComputedHydHeadVariables();
+
+      if(elementCell->isBedCell)
+      {
+        for(int m = 1; m < m_numBedZCells; m++)
+        {
+          ElementCell *telementCell = elementCell->bedCells[m];
+          telementCell->calculatePreComputedHydHeadVariables();
+        }
+      }
     }
 
     element->computeChannelMassFlux();
@@ -280,41 +360,66 @@ void GWModel::calculatePreComputedHydHeadVariables()
 
 void GWModel::calculatePreComputedTempVariables()
 {
+
+  if(m_solveHeatTransport)
+  {
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)m_elements.size()  ; i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
+    for(int i = 0 ; i < (int)m_elements.size()  ; i++)
     {
-      ElementCell *elementCell = element->elementCells[j];
-      elementCell->calculatePreComputedTempVariables();
-    }
+      Element *element = m_elements[i];
 
-    element->computeChannelHeatFlux();
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+        elementCell->calculatePreComputedTempVariables();
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+            telementCell->calculatePreComputedTempVariables();
+          }
+        }
+      }
+
+      element->computeChannelHeatFlux();
+    }
   }
 }
 
 void GWModel::calculatePreComputedSoluteVariables()
 {
+  if(m_solutes.size() > 0)
+  {
 #ifdef USE_OPENMP
 #pragma omp parallel for
 #endif
-  for(int i = 0 ; i < (int)m_elements.size()  ; i++)
-  {
-    Element *element = m_elements[i];
-
-    for(int j = 0; j < m_totalCellsPerElement; j++)
+    for(int i = 0 ; i < (int)m_elements.size()  ; i++)
     {
-      ElementCell *elementCell = element->elementCells[j];
-      elementCell->calculatePreComputedSoluteVariables();
-    }
+      Element *element = m_elements[i];
 
-    for(size_t j = 0; j < m_solutes.size(); j++)
-    {
-      element->computeChannelSoluteFlux(j);
+      for(int j = 0; j < m_totalCellsPerElement; j++)
+      {
+        ElementCell *elementCell = element->elementCells[j];
+        elementCell->calculatePreComputedSoluteVariables();
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+            telementCell->calculatePreComputedSoluteVariables();
+          }
+        }
+      }
+
+      for(size_t j = 0; j < m_solutes.size(); j++)
+      {
+        element->computeChannelSoluteFlux(j);
+      }
     }
   }
 }
@@ -331,9 +436,6 @@ void GWModel::solve(double timeStep)
     {
       Element *element = m_elements[i];
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
       for(int j = 0; j < m_totalCellsPerElement; j++)
       {
         ElementCell *elementCell = element->elementCells[j];
@@ -347,6 +449,25 @@ void GWModel::solve(double timeStep)
           m_solverCurrentValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
           m_solverOutValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
         }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            m_solverCurrentValues[telementCell->index] = telementCell->hydHead.value;
+            m_solverOutValues[telementCell->index] = telementCell->hydHead.value;
+            m_solverCurrentValues[telementCell->index + m_tempIndex] = telementCell->temperature.value;
+            m_solverOutValues[telementCell->index + m_tempIndex] = telementCell->temperature.value;
+
+            for(size_t s = 0 ; s < m_solutes.size(); s++)
+            {
+              m_solverCurrentValues[telementCell->index + m_soluteIndexes[s]] = telementCell->soluteConcs[s].value;
+              m_solverOutValues[telementCell->index + m_soluteIndexes[s]] = telementCell->soluteConcs[s].value;
+            }
+          }
+        }
       }
     }
 
@@ -356,7 +477,7 @@ void GWModel::solve(double timeStep)
     if(m_odeSolver->solve(m_solverCurrentValues.data(), m_solverCurrentValues.size() , 0, timeStep,
                           m_solverOutValues.data(), &GWModel::computeDYDt, &solverUserData))
     {
-      printf("Solver failed \n");
+      printf("GWComponent Solver failed \n");
     }
 
     //Apply computed values;
@@ -367,9 +488,6 @@ void GWModel::solve(double timeStep)
     {
       Element *element = m_elements[i];
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
       for(int j = 0; j < m_totalCellsPerElement; j++)
       {
         ElementCell *elementCell = element->elementCells[j];
@@ -377,12 +495,30 @@ void GWModel::solve(double timeStep)
         elementCell->hydHead.value = m_solverOutValues[elementCell->index];
         elementCell->temperature.value = m_solverOutValues[elementCell->index + m_tempIndex];
 
-        for(size_t s = 0 ; s < m_solutes.size(); s++)
+        for(size_t s = 0; s < m_solutes.size(); s++)
         {
           elementCell->soluteConcs[s].value = m_solverOutValues[elementCell->index + m_soluteIndexes[s]];
         }
 
         elementCell->computeVolumeDerivative();
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            telementCell->hydHead.value = m_solverOutValues[telementCell->index];
+            telementCell->temperature.value = m_solverOutValues[telementCell->index + m_tempIndex];
+
+            for(size_t s = 0 ; s < m_solutes.size(); s++)
+            {
+              telementCell->soluteConcs[s].value = m_solverOutValues[telementCell->index + m_soluteIndexes[s]];
+            }
+
+            telementCell->computeVolumeDerivative();
+          }
+        }
       }
     }
   }
@@ -395,9 +531,6 @@ void GWModel::solve(double timeStep)
     {
       Element *element = m_elements[i];
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
       for(int j = 0; j < m_totalCellsPerElement; j++)
       {
         ElementCell *elementCell = element->elementCells[j];
@@ -409,6 +542,23 @@ void GWModel::solve(double timeStep)
           m_solverCurrentValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
           m_solverOutValues[elementCell->index + m_soluteIndexes[s]] = elementCell->soluteConcs[s].value;
         }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            m_solverCurrentValues[telementCell->index] = telementCell->hydHead.value;
+            m_solverOutValues[telementCell->index] = telementCell->hydHead.value;
+
+            for(size_t s = 0 ; s < m_solutes.size(); s++)
+            {
+              m_solverCurrentValues[telementCell->index + m_soluteIndexes[s]] = telementCell->soluteConcs[s].value;
+              m_solverOutValues[telementCell->index + m_soluteIndexes[s]] = telementCell->soluteConcs[s].value;
+            }
+          }
+        }
       }
     }
 
@@ -418,7 +568,7 @@ void GWModel::solve(double timeStep)
     if(m_odeSolver->solve(m_solverCurrentValues.data(), m_solverCurrentValues.size() , m_currentDateTime * 86400.0, timeStep,
                           m_solverOutValues.data(), &GWModel::computeDYDt, &solverUserData))
     {
-      printf("Solver failed \n");
+      printf("GWComponent Solver failed \n");
     }
 
     //Apply computed values;
@@ -429,15 +579,10 @@ void GWModel::solve(double timeStep)
     {
       Element *element = m_elements[i];
 
-#ifdef USE_OPENMP
-#pragma omp parallel for
-#endif
       for(int j = 0; j < m_totalCellsPerElement; j++)
       {
         ElementCell *elementCell = element->elementCells[j];
-
         elementCell->hydHead.value = m_solverOutValues[elementCell->index];
-        elementCell->temperature.value = m_solverOutValues[elementCell->index + m_tempIndex];
 
         for(size_t s = 0 ; s < m_solutes.size(); s++)
         {
@@ -445,6 +590,23 @@ void GWModel::solve(double timeStep)
         }
 
         elementCell->computeVolumeDerivative();
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            telementCell->hydHead.value = m_solverOutValues[telementCell->index];
+
+            for(size_t s = 0 ; s < m_solutes.size(); s++)
+            {
+              telementCell->soluteConcs[s].value = m_solverOutValues[telementCell->index + m_soluteIndexes[s]];
+            }
+
+            telementCell->computeVolumeDerivative();
+          }
+        }
       }
     }
   }
@@ -465,16 +627,25 @@ void GWModel::computeDYDt(double t, double y[], double dydt[], void *userData)
       Element *element = modelInstance->m_elements[i];
 
 #ifdef USE_OPENMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
       for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
       {
         ElementCell  *elementCell = element->elementCells[j];
         dydt[elementCell->index] = elementCell->computeDHydHeadDt(t, y);
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < modelInstance->m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+            dydt[telementCell->index] = telementCell->computeDHydHeadDt(t, y);
+          }
+        }
       }
 
 #ifdef USE_OPENMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
       for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
       {
@@ -484,6 +655,21 @@ void GWModel::computeDYDt(double t, double y[], double dydt[], void *userData)
         for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
         {
           dydt[elementCell->index + modelInstance->m_soluteIndexes[s]] = elementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+        }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < modelInstance->m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            dydt[telementCell->index + modelInstance->m_tempIndex] = telementCell->computeDTDt(t, &y[modelInstance->m_tempIndex]);
+
+            for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
+            {
+              dydt[telementCell->index + modelInstance->m_soluteIndexes[s]] = telementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+            }
+          }
         }
       }
     }
@@ -498,16 +684,25 @@ void GWModel::computeDYDt(double t, double y[], double dydt[], void *userData)
       Element *element = modelInstance->m_elements[i];
 
 #ifdef USE_OPENMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
       for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
       {
         ElementCell  *elementCell = element->elementCells[j];
         dydt[elementCell->index] = elementCell->computeDHydHeadDt(t, y);
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < modelInstance->m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+            dydt[telementCell->index] = telementCell->computeDHydHeadDt(t, y);
+          }
+        }
       }
 
 #ifdef USE_OPENMP
-#pragma omp parallel for
+//#pragma omp parallel for
 #endif
       for(int j = 0 ; j < modelInstance->m_totalCellsPerElement; j++)
       {
@@ -515,6 +710,19 @@ void GWModel::computeDYDt(double t, double y[], double dydt[], void *userData)
         for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
         {
           dydt[elementCell->index + modelInstance->m_soluteIndexes[s]] = elementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+        }
+
+        if(elementCell->isBedCell)
+        {
+          for(int m = 1; m < modelInstance->m_numBedZCells; m++)
+          {
+            ElementCell *telementCell = elementCell->bedCells[m];
+
+            for(size_t s = 0 ; s < modelInstance->m_solutes.size(); s++)
+            {
+              dydt[telementCell->index + modelInstance->m_soluteIndexes[s]] = telementCell->computeDSoluteDt(t, &y[modelInstance->m_soluteIndexes[s]], s);
+            }
+          }
         }
       }
     }
